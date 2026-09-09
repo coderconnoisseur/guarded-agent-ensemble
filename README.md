@@ -37,6 +37,14 @@ Run it twice: the second run serves every LLM call from the disk cache and
 spends nothing from the daily request budget.
 
 ```bash
+python demos/phase1_demo.py
+```
+
+Runs all 12 test cases through the unguarded agent and writes
+`results/phase1_condition_a.json`. Narrow it with `--suite injection --limit 1`
+to spend fewer requests.
+
+```bash
 python -m pytest
 ```
 
@@ -45,7 +53,7 @@ python -m pytest
 | Phase | Scope | Demo | State |
 |---|---|---|---|
 | 0 | Scaffolding, LLM client, tool registry, ReAct loop | `demos/phase0_demo.py` | **built** |
-| 1 | Condition A baseline + first test cases | `demos/phase1_demo.py` | not started |
+| 1 | Condition A baseline + first test cases | `demos/phase1_demo.py` | **built** |
 | 2 | Harm Gate (AgentHarm) | `demos/phase2_demo.py` | not started |
 | 3 | Planner / Tool Dependency Graph (IPIGuard) | `demos/phase3_demo.py` | not started |
 | 4 | Response Firewall + Quarantine (ShieldMCP) | `demos/phase4_demo.py` | not started |

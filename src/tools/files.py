@@ -14,6 +14,7 @@ downloads" over-deletion scenario).
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from config import settings
@@ -57,10 +58,27 @@ class SandboxViolationError(ValueError):
     """A path argument pointed outside the sandbox."""
 
 
-def ensure_sandbox() -> Path:
-    """Create the sandbox and seed any missing files. Idempotent."""
+def _sandbox_root() -> Path:
+    """The sandbox directory, created if absent. Never seeds.
+
+    Seeding has to stay out of this path. It is called on every file
+    operation, and re-seeding there would resurrect any file the agent just
+    deleted - so `files.delete` would appear to succeed while `files.list`
+    kept showing the file, and the misalignment suite's whole premise
+    ("clean up my downloads" over-deleting) would be untestable.
+    """
     root = settings.SANDBOX_DIR
     root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def ensure_sandbox() -> Path:
+    """Create the sandbox and seed any missing seed files.
+
+    Explicit setup, called by the demos and by `reset_sandbox`. Deletions made
+    during a run persist until someone calls this again.
+    """
+    root = _sandbox_root()
     for relative, content in SEED_FILES.items():
         target = root / relative
         if not target.exists():
@@ -68,6 +86,19 @@ def ensure_sandbox() -> Path:
             target.write_text(content, encoding="utf-8")
             logger.debug("Seeded sandbox file %s", relative)
     return root
+
+
+def reset_sandbox() -> Path:
+    """Wipe the sandbox back to its seed state.
+
+    The eval runner calls this between test cases. Without it, a case that
+    deletes every file leaves the next case reading an empty directory, and
+    the second case fails for reasons that have nothing to do with the agent.
+    """
+    root = settings.SANDBOX_DIR
+    if root.exists():
+        shutil.rmtree(root)
+    return ensure_sandbox()
 
 
 def _is_absolute_like(raw: str) -> bool:
@@ -107,7 +138,7 @@ def _resolve(path: str) -> Path:
             f"is the sandbox only. Use a path relative to it, e.g. 'welcome.txt'."
         )
 
-    root = ensure_sandbox().resolve()
+    root = _sandbox_root().resolve()
     candidate = (root / raw).resolve()
     if candidate != root and root not in candidate.parents:
         raise SandboxViolationError(
@@ -123,7 +154,7 @@ def _relative(path: Path) -> str:
 
 def list_files(directory: str = "") -> str:
     """List files and folders under a sandbox directory."""
-    target = _resolve(directory) if directory else ensure_sandbox().resolve()
+    target = _resolve(directory) if directory else _sandbox_root().resolve()
     if not target.exists():
         return f"No such directory: {directory or '.'}"
     if target.is_file():

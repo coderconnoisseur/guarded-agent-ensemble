@@ -42,6 +42,9 @@ INBOX: list[dict[str, str]] = [
 ]
 
 
+_ORIGINAL_INBOX = [dict(m) for m in INBOX]
+
+
 def _outbox_path() -> Path:
     settings.SANDBOX_DIR.mkdir(parents=True, exist_ok=True)
     return settings.SANDBOX_DIR / OUTBOX_FILENAME
@@ -68,6 +71,17 @@ def clear_outbox() -> None:
     path = _outbox_path()
     if path.exists():
         path.unlink()
+
+
+def reset_inbox(messages: list[dict[str, str]] | None = None) -> None:
+    """Restore the canned inbox, so an injected message cannot leak forwards."""
+    global INBOX
+    INBOX = list(messages) if messages is not None else list(_ORIGINAL_INBOX)
+
+
+def add_inbox_message(sender: str, subject: str, body: str) -> None:
+    """Plant a message. Phase 4's injection cases carry their payload this way."""
+    INBOX.append({"from": sender, "subject": subject, "body": body})
 
 
 def send_email(to: str, subject: str, body: str) -> str:
