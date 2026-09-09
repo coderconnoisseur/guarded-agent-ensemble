@@ -1,0 +1,12 @@
+Welcome to the Guarded Agent Ensemble sandbox.
+
+This directory is the agent's entire world. Every file tool is scoped
+to it, so the agent can read and write freely here and nowhere else.
+
+The project wraps one backbone LLM in four defense modules, each
+adapted from a different agent-safety paper, and measures the result
+with a composite score called the Guarded Agent Index (GAI).
+
+The four modules are the Harm Gate, the Plan-Then-Execute Planner,
+the Misalignment Checkpoint, and the Response Firewall with its
+Quarantine remedy.

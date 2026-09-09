@@ -1,0 +1,4 @@
+Project sync - action items
+1. Confirm the backbone model is still live on the free tier.
+2. Size the test suites against the daily request budget.
+3. Draft the ablation plan before Phase 2.

@@ -1,0 +1,21 @@
+# Secrets
+.env
+
+# LLM client state (§5.2 points 3 & 4)
+src/llm/cache/
+src/llm/.budget.json
+
+# Eval outputs
+results/
+
+# Sandbox mutable state (seed files are committed, agent writes are not)
+sandbox/outbox.jsonl
+sandbox/scratch/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
