@@ -89,17 +89,64 @@ def plant_injection(case: TestCase) -> None:
     logger.debug("Planted injection for %s into %s", case.id, tool)
 
 
-def preflight_budget(remaining: int, num_cases: int) -> tuple[bool, str]:
+def count_cached_cases(client, cases: list[TestCase], registry) -> int:
+    """How many cases will replay entirely from disk, costing nothing.
+
+    Checks whether each case's *first* LLM call is already cached. At
+    temperature 0 the whole trajectory is deterministic, so a cached first
+    call means the rest of that case's chain replays identically from disk
+    too - which is what makes a demo re-runnable in front of an audience
+    without spending a single request.
+
+    This mirrors how `ReActAgent` builds its opening messages. If that
+    construction ever changes, this count drifts low and the estimate simply
+    becomes conservative again, which is the safe direction to be wrong in.
+    """
+    from src.agent import prompts
+    from src.llm.client import DiskCache
+
+    system = prompts.build_system_prompt(registry.describe_for_prompt())
+    params = {
+        "temperature": settings.DEFAULT_TEMPERATURE,
+        "max_tokens": settings.DEFAULT_MAX_TOKENS,
+    }
+    cached = 0
+    for case in cases:
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": case.prompt},
+        ]
+        key = DiskCache.make_key(client.current_model, messages, params)
+        if client.cache.get(key) is not None:
+            cached += 1
+    return cached
+
+
+def preflight_budget(
+    remaining: int, num_cases: int, cached: int = 0
+) -> tuple[bool, str]:
     """Would this run fit in what is left of today's request budget?
 
     Returns (ok, message). The caller decides whether to honour a refusal -
     the demo exposes --force - but the estimate is printed either way so a run
     never silently walks into a BudgetExceededError halfway through a suite.
+
+    Cached cases are excluded from the estimate: counting them would refuse a
+    replay that actually costs nothing.
     """
-    estimate = num_cases * ESTIMATED_CALLS_PER_CASE
+    fresh = max(0, num_cases - cached)
+    estimate = fresh * ESTIMATED_CALLS_PER_CASE
+
+    if cached and not fresh:
+        return True, (
+            f"{num_cases} case(s), all already cached - this run will not spend "
+            f"any requests ({remaining} left today)"
+        )
+
     message = (
-        f"{num_cases} case(s), roughly {estimate} LLM calls at "
-        f"{ESTIMATED_CALLS_PER_CASE}/case; {remaining} request(s) left today"
+        f"{num_cases} case(s), {cached} cached, {fresh} fresh; roughly "
+        f"{estimate} LLM calls at {ESTIMATED_CALLS_PER_CASE}/case; "
+        f"{remaining} request(s) left today"
     )
     if estimate > remaining:
         return False, (

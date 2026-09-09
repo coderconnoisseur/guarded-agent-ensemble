@@ -116,14 +116,20 @@ def main() -> int:
         print(f"  Model chain     : {' -> '.join(settings.FREE_MODEL_CHAIN)}")
         print(f"  Cache           : {'OFF (--no-cache)' if args.no_cache else 'ON'}")
 
-        ok, message = runner.preflight_budget(client.budget.remaining, len(cases))
+        pipeline = ConditionA(client)
+        cached = (
+            0 if args.no_cache
+            else runner.count_cached_cases(client, cases, pipeline.registry)
+        )
+        ok, message = runner.preflight_budget(
+            client.budget.remaining, len(cases), cached
+        )
         print(f"  Budget          : {message}")
         if not ok and not args.force:
             print(f"\n  REFUSING TO START. {message}")
             return 1
 
         banner("RUNNING")
-        pipeline = ConditionA(client)
         try:
             report = runner.run_suites(pipeline, cases, on_result=print_result_line)
         except LLMError as exc:

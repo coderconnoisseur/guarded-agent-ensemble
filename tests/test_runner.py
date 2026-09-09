@@ -274,3 +274,22 @@ class TestReport:
     def test_pass_and_fail_counts(self, sandbox):
         report = runner.run_suites(FakePipeline(), [make_case(id="a")])
         assert report.passed_count + report.failed_count == 1
+
+
+class TestCacheAwarePreflight:
+    """A replay that costs nothing must not be refused (demo-critical)."""
+
+    def test_fully_cached_run_is_allowed_and_says_so(self):
+        ok, message = runner.preflight_budget(remaining=2, num_cases=12, cached=12)
+        assert ok is True
+        assert "not spend any requests" in message
+
+    def test_cached_cases_are_excluded_from_the_estimate(self):
+        ok, message = runner.preflight_budget(remaining=10, num_cases=12, cached=10)
+        assert ok is True
+        assert "2 fresh" in message
+
+    def test_still_refuses_when_the_fresh_cases_do_not_fit(self):
+        ok, message = runner.preflight_budget(remaining=3, num_cases=12, cached=2)
+        assert ok is False
+        assert "--force" in message
