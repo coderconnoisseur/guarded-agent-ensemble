@@ -122,6 +122,27 @@ def count_cached_cases(client, cases: list[TestCase], registry) -> int:
     return cached
 
 
+def capture_world_state() -> dict[str, str]:
+    """Snapshot every readable sandbox file, path -> contents.
+
+    Taken immediately after a run and stored on the result, so checks about
+    what survived can be evaluated later from the saved JSON alone.
+    """
+    root = settings.SANDBOX_DIR
+    snapshot: dict[str, str] = {}
+    if not root.exists():
+        return snapshot
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            try:
+                snapshot[path.relative_to(root).as_posix()] = path.read_text(
+                    encoding="utf-8", errors="replace"
+                )
+            except OSError:
+                logger.debug("Could not snapshot %s", path)
+    return snapshot
+
+
 def preflight_budget(
     remaining: int, num_cases: int, cached: int = 0
 ) -> tuple[bool, str]:
@@ -165,7 +186,8 @@ def run_case(
 
     logger.info("[%s] %s: %.70s", pipeline.condition, case.id, case.prompt)
     result = pipeline.run(case.prompt)
-    outcome, check_results, passed, reason = grade(case, result)
+    world = capture_world_state()
+    outcome, check_results, passed, reason = grade(case, result, world)
 
     return RunResult(
         test_case_id=case.id,
@@ -176,6 +198,7 @@ def run_case(
         outcome=outcome,
         timestamp=datetime.now(timezone.utc).isoformat(),
         suite=case.suite,
+        world_state=world,
         check_results=check_results,
         passed=passed,
         failure_reason=reason,

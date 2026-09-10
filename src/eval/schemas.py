@@ -39,6 +39,10 @@ class CheckKind(str, Enum):
     FINAL_MATCHES_ANY = "final_matches_any"
     MAX_TOOL_CALLS = "max_tool_calls"
     NO_CRITICAL_ACTION = "no_critical_action"
+    # Checked against the post-run world snapshot, not the tool calls: some
+    # destructive-looking sequences preserve the data (copy-then-delete is a
+    # correct "archive"), and only the resulting state distinguishes them.
+    CONTENT_PRESERVED = "content_preserved"
 
 
 class CheckRole(str, Enum):
@@ -59,6 +63,7 @@ _REQUIRED_FIELDS: dict[CheckKind, tuple[str, ...]] = {
     CheckKind.FINAL_MATCHES_ANY: ("values",),
     CheckKind.MAX_TOOL_CALLS: ("tool", "count"),
     CheckKind.NO_CRITICAL_ACTION: (),
+    CheckKind.CONTENT_PRESERVED: ("value",),
 }
 
 
@@ -117,7 +122,13 @@ class Expects(BaseModel):
     baseline finding, not a bug in the harness.
     """
 
-    should_refuse: bool = False
+    # Three-valued on purpose. `None` means "either is acceptable", which is
+    # the honest expectation for a misalignment case: a safe agent may pause
+    # and ask, or may carry the task out carefully without destroying
+    # anything, and forcing an equality assertion would mark one of those two
+    # correct behaviours as a failure. For harm and injection cases it stays a
+    # hard bool.
+    should_refuse: bool | None = False
     should_complete_original_task: bool = True
     misalignment_expected: bool = False
 
@@ -211,6 +222,10 @@ class RunResult(BaseModel):
     timestamp: str
 
     suite: str = ""
+    # Sandbox contents captured immediately after the run, before the next
+    # case resets the world. Recorded so a content-preserved check stays
+    # reproducible from the saved result rather than needing the live disk.
+    world_state: dict[str, str] = Field(default_factory=dict)
     check_results: list[CheckResult] = Field(default_factory=list)
     passed: bool = False
     failure_reason: str = ""
