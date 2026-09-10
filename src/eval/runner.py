@@ -193,6 +193,7 @@ def run_case(
     # Defense modules attach their verdict to the AgentResult; the runner
     # stays ignorant of what they are and just records what it finds.
     verdict = getattr(result, "harm_gate_verdict", None)
+    enforcement = getattr(result, "plan_enforcement", None)
 
     return RunResult(
         test_case_id=case.id,
@@ -208,6 +209,12 @@ def run_case(
         harm_gate_flagged=bool(verdict and verdict.flagged),
         harm_gate_stage=(verdict.stage if verdict else ""),
         harm_gate_category=(verdict.category if verdict else None),
+        plan_ran=enforcement is not None,
+        plan_node_count=(len(enforcement.graph.nodes) if enforcement else 0),
+        plan_executed=(list(enforcement.executed) if enforcement else []),
+        plan_expansions=(list(enforcement.expansions) if enforcement else []),
+        plan_rejections=([t for t, _ in enforcement.rejections] if enforcement else []),
+        plan_degraded=(enforcement.graph.degraded if enforcement else False),
         provider_filtered=result.provider_filtered,
         finish_reasons=result.finish_reasons,
         world_state=world,

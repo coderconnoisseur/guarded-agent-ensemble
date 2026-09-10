@@ -233,6 +233,19 @@ class RunResult(BaseModel):
     harm_gate_flagged: bool = False
     harm_gate_stage: str = ""
     harm_gate_category: str | None = None
+    # IPIGuard plan enforcement. `plan_degraded` matters for honesty: a run
+    # where planning failed was never actually constrained, and must not be
+    # counted as evidence that the Planner worked.
+    # Distinguishes "the planner produced an empty plan" from "the planner
+    # never ran because an earlier module blocked first". Both leave
+    # plan_node_count at 0, and confusing them would misattribute a Harm Gate
+    # block to the Planner in the ablation table.
+    plan_ran: bool = False
+    plan_node_count: int = 0
+    plan_executed: list[str] = Field(default_factory=list)
+    plan_expansions: list[str] = Field(default_factory=list)
+    plan_rejections: list[str] = Field(default_factory=list)
+    plan_degraded: bool = False
     # True when a provider-side safety layer intervened rather than the model
     # itself declining. A refusal recorded on such a run says something about
     # the hosted API, not about the backbone, so HS must not absorb it

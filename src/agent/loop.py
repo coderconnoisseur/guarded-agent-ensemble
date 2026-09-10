@@ -235,6 +235,7 @@ class AgentResult:
     # Any to keep the agent loop free of any dependency on src/defense - the
     # loop must stay identical between conditions.
     harm_gate_verdict: Any = None
+    plan_enforcement: Any = None
 
     @property
     def tool_calls(self) -> list[tuple[str, dict[str, Any]]]:

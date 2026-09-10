@@ -14,8 +14,9 @@ measurable:
     the full mixed suite, which is what shows each one covering its own
     threat model and nothing else - the actual argument for an *ensemble*.
 
-Phase 2 wires the first module. The remaining names are declared but not yet
-implemented; asking for one raises rather than silently running unguarded,
+Phases 2 and 3 wire the first two modules. The remaining names are declared
+but not yet implemented; asking for one raises rather than silently running
+unguarded,
 because a config typo that quietly disables a defense would show up as a
 suspiciously good number rather than an error.
 """
@@ -29,6 +30,11 @@ from typing import Any
 from config import settings
 from src.agent.loop import AgentResult, ReActAgent
 from src.defense.harm_gate import HarmGate, HarmVerdict
+from src.defense.planner import (
+    PlanEnforcement,
+    PlanEnforcingRegistry,
+    Planner,
+)
 from src.llm.client import LLMClient
 from src.tools.registry import ToolRegistry, build_default_registry
 
@@ -37,7 +43,7 @@ logger = logging.getLogger(__name__)
 CONDITION = "B"
 
 # Implemented today. The rest of ALL_MODULES arrives in Phases 3-5.
-IMPLEMENTED_MODULES: frozenset[str] = frozenset({"harm_gate"})
+IMPLEMENTED_MODULES: frozenset[str] = frozenset({"harm_gate", "planner"})
 ALL_MODULES: frozenset[str] = frozenset(
     {"harm_gate", "planner", "firewall", "quarantine", "misalignment"}
 )
@@ -87,6 +93,11 @@ class ConditionB:
             if "harm_gate" in self.enabled_modules
             else None
         )
+        self.planner = (
+            Planner(client=client, model=self.model)
+            if "planner" in self.enabled_modules
+            else None
+        )
 
     # -- module: Harm Gate -------------------------------------------------
 
@@ -133,10 +144,26 @@ class ConditionB:
                 return result
             logger.debug("Harm Gate passed: %s", verdict.reason)
 
+        # IPIGuard: plan the whole tool sequence before the agent sees any
+        # tool output, then restrict execution to that plan. Building the plan
+        # first is the load-bearing part - a plan written after untrusted
+        # content is in context is not a constraint on anything.
+        enforcement: PlanEnforcement | None = None
+        if self.planner is not None:
+            graph = self.planner.build_plan(task, self.registry)
+            enforcement = PlanEnforcement(
+                graph=graph, llm_calls=self.planner.llm_calls
+            )
+            self.agent.registry = PlanEnforcingRegistry(self.registry, enforcement)
+
         result = self.agent.run(task)
-        # Charge the gate's own calls to the run, so LAT and the call counts
-        # include the cost of the defense rather than hiding it.
+
+        # Charge every defense's own calls to the run, so LAT and the call
+        # counts include the cost of the defense rather than hiding it.
         if self.harm_gate is not None:
             result.num_llm_calls += verdict.llm_calls
             result.harm_gate_verdict = verdict
+        if enforcement is not None:
+            result.num_llm_calls += enforcement.llm_calls
+            result.plan_enforcement = enforcement
         return result

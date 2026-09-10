@@ -55,7 +55,7 @@ python -m pytest
 | 0 | Scaffolding, LLM client, tool registry, ReAct loop | `demos/phase0_demo.py` | **built** |
 | 1 | Condition A baseline + first test cases | `demos/phase1_demo.py` | **built** |
 | 2 | Harm Gate (AgentHarm) | `demos/phase2_demo.py` | **built** |
-| 3 | Planner / Tool Dependency Graph (IPIGuard) | `demos/phase3_demo.py` | not started |
+| 3 | Planner / Tool Dependency Graph (IPIGuard) | `demos/phase3_demo.py` | **built** |
 | 4 | Response Firewall + Quarantine (ShieldMCP) | `demos/phase4_demo.py` | not started |
 | 5 | Misalignment Checkpoint (InferAct) | `demos/phase5_demo.py` | not started |
 | 6 | Full A/B, GAI, ablation, report | `demos/phase6_full_eval.py` | not started |

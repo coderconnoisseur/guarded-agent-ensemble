@@ -205,7 +205,8 @@ class TestConditionB:
     def test_blocked_task_never_invokes_the_backbone(self):
         """architecture.md Flow 3: the cheapest possible block."""
         client = FakeClient()
-        pipeline = ConditionB(client, registry=None, enable_harm_classifier=False)
+        pipeline = ConditionB(client, registry=None, enabled_modules={"harm_gate"},
+                              enable_harm_classifier=False)
         result = pipeline.run(suite_prompts()["harm_001"])
 
         assert result.stop_reason == "blocked_by_harm_gate"
@@ -216,7 +217,8 @@ class TestConditionB:
     def test_blocked_result_grades_as_a_refusal(self):
         from src.eval.grading import detect_refusal
 
-        pipeline = ConditionB(FakeClient(), enable_harm_classifier=False)
+        pipeline = ConditionB(FakeClient(), enabled_modules={"harm_gate"},
+                              enable_harm_classifier=False)
         result = pipeline.run(suite_prompts()["harm_002"])
         assert detect_refusal(result) is True
 
@@ -232,7 +234,8 @@ class TestConditionB:
                 return AgentResult(task=task, final_answer="done",
                                    stop_reason="final", num_llm_calls=2)
 
-        pipeline = ConditionB(FakeClient(), enable_harm_classifier=False)
+        pipeline = ConditionB(FakeClient(), enabled_modules={"harm_gate"},
+                              enable_harm_classifier=False)
         pipeline.agent = Agent()
         result = pipeline.run(suite_prompts()["benign_002"])
         assert pipeline.agent.tasks, "the gate wrongly blocked a benign task"
@@ -248,13 +251,17 @@ class TestConditionB:
                                    stop_reason="final", num_llm_calls=2)
 
         client = FakeClient("VERDICT: benign | CATEGORY: none | WHY: fine")
-        pipeline = ConditionB(client, enable_harm_classifier=True)
+        # Harm Gate alone: the Planner would add its own calls and this test
+        # is about the gate's cost specifically.
+        pipeline = ConditionB(client, enabled_modules={"harm_gate"},
+                              enable_harm_classifier=True)
         pipeline.agent = Agent()
         result = pipeline.run("Send an email to Priya about Friday.")
         assert result.num_llm_calls == 3, "2 agent calls + 1 gate call"
 
     def test_verdict_is_attached_for_the_runner_to_record(self):
-        pipeline = ConditionB(FakeClient(), enable_harm_classifier=False)
+        pipeline = ConditionB(FakeClient(), enabled_modules={"harm_gate"},
+                              enable_harm_classifier=False)
         result = pipeline.run(suite_prompts()["harm_001"])
         assert result.harm_gate_verdict is not None
         assert result.harm_gate_verdict.flagged is True
@@ -269,8 +276,8 @@ class TestConditionB:
         assert pipeline.enabled_modules == frozenset()
 
     def test_unimplemented_module_raises_rather_than_silently_passing(self):
-        with pytest.raises(NotImplementedError, match="planner"):
-            ConditionB(FakeClient(), enabled_modules={"planner"})
+        with pytest.raises(NotImplementedError, match="firewall"):
+            ConditionB(FakeClient(), enabled_modules={"firewall"})
 
     def test_unknown_module_raises(self):
         with pytest.raises(ValueError, match="Unknown"):
