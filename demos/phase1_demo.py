@@ -94,6 +94,12 @@ def main() -> int:
                         help="Run even if the budget preflight says it may not fit.")
     parser.add_argument("--no-cache", action="store_true",
                         help="Bypass the disk cache (spends budget).")
+    parser.add_argument(
+        "--model",
+        help="Pin one backbone instead of walking the provider chain "
+             "(e.g. gemini-2.5-flash). Scored runs should always pin, so the "
+             "A/B comparison stays on a single model (CLAUDE.md 9.1).",
+    )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -113,10 +119,14 @@ def main() -> int:
         banner("PHASE 1 - CONDITION A BASELINE (no defenses)")
         print(f"  Cases           : {len(cases)} "
               f"across {', '.join(sorted({c.suite for c in cases}))}")
-        print(f"  Model chain     : {' -> '.join(settings.FREE_MODEL_CHAIN)}")
+        chain = (f"PINNED {args.model}" if args.model
+                 else " -> ".join(f"{p}/{m}" for p, m in settings.PROVIDER_CHAIN))
+        print(f"  Model chain     : {chain}")
         print(f"  Cache           : {'OFF (--no-cache)' if args.no_cache else 'ON'}")
 
-        pipeline = ConditionA(client)
+        pipeline = ConditionA(
+            client, **({"model": args.model} if args.model else {})
+        )
         cached = (
             0 if args.no_cache
             else runner.count_cached_cases(client, cases, pipeline.registry)
@@ -152,8 +162,7 @@ def main() -> int:
             print(f"      {count} x {reason}")
         print(f"  Backbone        : {report.backbone_model}")
         print(f"  LLM calls       : {spent}")
-        print(f"  Daily budget    : {client.budget.used_today}/"
-              f"{client.budget.daily_cap} used ({client.budget.remaining} left)")
+        print(f"  Daily budget    : {client.budget_summary()}")
         print(f"  Results written : {path}")
 
         if report.failed_count >= 2:

@@ -96,8 +96,10 @@ def print_summary(result: AgentResult, client: LLMClient) -> None:
     print(f"  Tools called    : "
           f"{', '.join(name for name, _ in result.tool_calls) or '(none)'}")
     print(f"  Wall time       : {result.total_latency_ms} ms")
-    print(f"  Daily budget    : {client.budget.used_today}/{client.budget.daily_cap} "
-          f"used ({client.budget.remaining} left)")
+    # Per-backend, because `client.budget` alone reports whichever provider
+    # the chain pointer happens to sit on - which is misleading when a run
+    # pinned a different one.
+    print(f"  Daily budget    : {client.budget_summary()}")
     if result.error:
         print(f"  Error           : {result.error}")
 
@@ -122,6 +124,11 @@ def main() -> int:
     parser.add_argument(
         "--no-cache", action="store_true", help="Bypass the disk cache (spends budget)."
     )
+    parser.add_argument(
+        "--model",
+        help="Pin one backbone instead of walking the provider chain "
+             "(e.g. gemini-2.5-flash). Scored runs should always pin.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -139,12 +146,14 @@ def main() -> int:
     print(f"  Sandbox         : {sandbox}")
     print(f"  Tools registered: {len(registry.names())} -> {', '.join(registry.names())}")
     print(f"  Critical tools  : {', '.join(registry.critical_tools())}")
-    print(f"  Model chain     : {' -> '.join(settings.FREE_MODEL_CHAIN)}")
+    chain = (f"PINNED {args.model}" if args.model
+             else " -> ".join(f"{p}/{m}" for p, m in settings.PROVIDER_CHAIN))
+    print(f"  Model chain     : {chain}")
     print(f"  Cache           : {'OFF (--no-cache)' if args.no_cache else 'ON'}")
     print(f"  Task            : {args.task}")
 
     with LLMClient(cache_enabled=not args.no_cache) as client:
-        agent = ReActAgent(client, registry)
+        agent = ReActAgent(client, registry, **({"model": args.model} if args.model else {}))
         try:
             result = agent.run(args.task)
         except LLMError as exc:

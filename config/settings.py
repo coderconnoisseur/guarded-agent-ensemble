@@ -89,6 +89,7 @@ FREE_MODEL_CHAIN = [
 # §5.1: 50/day with no purchased credits, 1000/day after a one-time $10 top-up.
 DAILY_REQUEST_CAP = int(_setting("DAILY_REQUEST_CAP", "50") or 50)
 
+
 # §5.2 point 2: real cap is 20/min on :free models; target 15 for retry headroom.
 RATE_LIMIT_PER_MINUTE = 15
 
@@ -107,6 +108,70 @@ CACHE_ENABLED = True
 REQUEST_TIMEOUT_S = 120.0
 DEFAULT_TEMPERATURE = 0.0
 DEFAULT_MAX_TOKENS = 1024
+
+
+# ---------------------------------------------------------------------------
+# Google Gemini (second backend, same client.chat() interface)
+# ---------------------------------------------------------------------------
+
+# OpenRouter's 50/day free tier cannot cover a full A/B evaluation run (§5.4
+# does the arithmetic). Gemini's free tier is several hundred per day, so it
+# is the overflow backend: when OpenRouter's daily budget is spent, the client
+# continues on Gemini rather than raising.
+GEMINI_API_KEY = _setting("GEMINI_API_KEY")
+
+# Verified live against GET https://generativelanguage.googleapis.com/v1beta/models
+# on 2026-09-10, and probed with a real generateContent call: gemini-2.5-flash
+# emitted the §5.3 protocol ("Final: 4") correctly on the first attempt.
+#
+# Deliberately pinned, non-preview, non-alias names. A `-latest` alias would
+# silently change model underneath a scored run and destroy its
+# reproducibility, which is the same volatility risk §5.1 warns about for
+# OpenRouter's free catalogue.
+GEMINI_MODEL_CHAIN = [
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+]
+
+# Reported limits are ~10-15 requests/minute and ~500-1500/day. Both are taken
+# at the conservative end: being throttled costs a retry, and being wrong
+# about the daily cap costs a half-finished eval run.
+GEMINI_DAILY_REQUEST_CAP = int(_setting("GEMINI_DAILY_REQUEST_CAP", "500") or 500)
+GEMINI_RATE_LIMIT_PER_MINUTE = 10
+
+
+# Ordered (provider, model) pairs the client walks on failure. OpenRouter
+# first because it is what the project was specified against; Gemini after it
+# as the overflow.
+#
+# Crossing a provider boundary mid-run changes the backbone mid-experiment,
+# which §9.1's A/B comparison cannot tolerate. The client logs every switch
+# loudly and each run result records the model that served it - but a scored
+# run should pin one model explicitly rather than rely on the chain.
+PROVIDER_CHAIN: list[tuple[str, str]] = [
+    *(("openrouter", model) for model in FREE_MODEL_CHAIN),
+    *(("gemini", model) for model in GEMINI_MODEL_CHAIN),
+]
+
+# Per-provider limits, looked up by provider name.
+PROVIDER_LIMITS: dict[str, dict[str, int]] = {
+    "openrouter": {
+        "daily_cap": DAILY_REQUEST_CAP,
+        "rate_limit_per_minute": RATE_LIMIT_PER_MINUTE,
+    },
+    "gemini": {
+        "daily_cap": GEMINI_DAILY_REQUEST_CAP,
+        "rate_limit_per_minute": GEMINI_RATE_LIMIT_PER_MINUTE,
+    },
+}
+
+
+def api_key_for(provider: str) -> str:
+    """The configured credential for one backend."""
+    return {
+        "openrouter": OPENROUTER_API_KEY,
+        "gemini": GEMINI_API_KEY,
+    }.get(provider, "")
 
 
 # ---------------------------------------------------------------------------

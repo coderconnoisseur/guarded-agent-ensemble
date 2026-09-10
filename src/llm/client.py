@@ -1,17 +1,28 @@
-"""OpenRouter chat client - the single choke point for every LLM call.
+"""Multi-provider chat client - the single choke point for every LLM call.
 
 Implements all six requirements of CLAUDE.md 5.2:
 
-  1. Base config: OpenRouter base URL, bearer auth, HTTP-Referer / X-Title.
-  2. Rate limiter: sleep-based, capped safely under the real 20 req/min.
-  3. Daily budget tracker: persisted to disk, raises BudgetExceededError.
+  1. Base config: per-provider base URL, auth and headers.
+  2. Rate limiter: sleep-based, one sliding window per provider.
+  3. Daily budget tracker: persisted to disk, one counter per provider.
   4. Disk response cache: keyed on (model, messages, params), with force_refresh.
   5. Retry with backoff: 429 / 5xx, exponential + jitter, honours Retry-After.
-  6. Model fallback chain: on persistent *errors* (not rate limits), switch model.
+  6. Model fallback chain: on persistent errors, or on a provider running out
+     of daily budget, continue down the chain.
 
-Every defense module, the agent loop, and the eval harness call `LLMClient.chat`
-rather than touching HTTP directly - that is what makes each call countable
-against the budget and inspectable in a transcript (CLAUDE.md 2).
+Every defense module, the agent loop, and the eval harness call
+`LLMClient.chat` rather than touching HTTP directly - that is what makes each
+call countable against a budget and inspectable in a transcript (2).
+
+Two backends are wired in (see `providers.py`): OpenRouter, which the project
+was specified against, and Google Gemini, whose free tier is large enough to
+run a full A/B evaluation that OpenRouter's 50/day cannot.
+
+  METHODOLOGICAL WARNING. When a provider's budget runs out mid-run the client
+  continues on the next provider, which changes the backbone mid-experiment.
+  9.1 requires the same backbone across a comparison, so every switch is
+  logged loudly and every result records the model that served it. Pin a model
+  explicitly for scored runs.
 """
 
 from __future__ import annotations
@@ -31,8 +42,12 @@ import httpx
 from pydantic import BaseModel, Field
 
 from config import settings
+from src.llm.providers import Provider, build_providers
 
 logger = logging.getLogger(__name__)
+
+# Human-facing name of the credential each backend needs, for error messages.
+_KEY_NAMES = {"openrouter": "OPENROUTER_API_KEY", "gemini": "GEMINI_API_KEY"}
 
 
 # ---------------------------------------------------------------------------
@@ -45,20 +60,15 @@ class LLMError(RuntimeError):
 
 
 class BudgetExceededError(LLMError):
-    """The configured daily request cap has been reached (5.2 point 3)."""
+    """Every usable provider has spent its daily request cap (5.2 point 3)."""
 
 
 class RateLimitExhaustedError(LLMError):
-    """Retried through the backoff schedule and the API is still rate-limiting.
-
-    Deliberately *not* a fallback trigger: OpenRouter's free-tier limits are
-    account-wide, so trying the next model in the chain would only burn more
-    quota against the same wall.
-    """
+    """Retried through the backoff schedule and still being rate-limited."""
 
 
 class AllModelsFailedError(LLMError):
-    """Every model in FREE_MODEL_CHAIN errored out (5.2 point 6)."""
+    """Every entry in the provider chain failed (5.2 point 6)."""
 
 
 # ---------------------------------------------------------------------------
@@ -70,7 +80,8 @@ class LLMResponse(BaseModel):
     """One completion, plus the provenance the eval harness needs.
 
     `from_cache` is what the Phase 0 demo checks to prove the disk cache is
-    live; `model_used` is what proves whether the fallback chain fired.
+    live; `model_used` and `provider` are what prove whether the fallback
+    chain fired, and whether a run stayed on one backbone.
     """
 
     content: str
@@ -78,11 +89,12 @@ class LLMResponse(BaseModel):
     latency_ms: int
     from_cache: bool
     raw: dict[str, Any] = Field(default_factory=dict)
+    provider: str = ""
 
     @property
     def usage(self) -> dict[str, Any]:
-        """Token counts as reported by OpenRouter, or {} if absent."""
-        return self.raw.get("usage") or {}
+        """Token counts as reported by the backend, or {} if absent."""
+        return self.raw.get("usage") or self.raw.get("usageMetadata") or {}
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +106,7 @@ class RateLimiter:
     """Sliding-window limiter capping outbound calls to N per minute.
 
     Sliding window rather than a fixed one so a burst at 0:59 followed by
-    another at 1:01 cannot smuggle 2N requests past a 20/min ceiling.
+    another at 1:01 cannot smuggle 2N requests past the ceiling.
     """
 
     def __init__(self, per_minute: int) -> None:
@@ -127,65 +139,85 @@ class RateLimiter:
 
 
 class BudgetTracker:
-    """Persists {date, count} so the daily cap survives process restarts.
+    """Persists per-provider request counts so caps survive restarts.
+
+    One file holds a counter per backend, because the caps differ by an order
+    of magnitude (OpenRouter 50/day, Gemini several hundred) and spending one
+    must not consume the other's headroom.
 
     Cache hits are never charged - only calls that actually leave the machine.
     """
 
-    def __init__(self, path: Path, daily_cap: int, warn_threshold: float = 0.8) -> None:
+    def __init__(
+        self,
+        path: Path,
+        daily_cap: int,
+        provider: str = "openrouter",
+        warn_threshold: float = 0.8,
+    ) -> None:
         self.path = path
         self.daily_cap = daily_cap
+        self.provider = provider
         self.warn_threshold = warn_threshold
         self._lock = threading.Lock()
 
-    def _load(self) -> dict[str, Any]:
+    def _load_document(self) -> dict[str, Any]:
         today = date.today().isoformat()
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return {"date": today, "count": 0}
+            return {"date": today, "counts": {}}
         if data.get("date") != today:
-            return {"date": today, "count": 0}
-        return {"date": today, "count": int(data.get("count", 0))}
+            return {"date": today, "counts": {}}
+        counts = data.get("counts")
+        if not isinstance(counts, dict):
+            # Migrate the single-provider format this file used before a
+            # second backend existed.
+            counts = {"openrouter": int(data.get("count", 0))}
+        return {"date": today, "counts": {k: int(v) for k, v in counts.items()}}
 
-    def _save(self, data: dict[str, Any]) -> None:
+    def _save_document(self, document: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        self.path.write_text(json.dumps(document, indent=2), encoding="utf-8")
 
     @property
     def used_today(self) -> int:
-        return self._load()["count"]
+        return self._load_document()["counts"].get(self.provider, 0)
 
     @property
     def remaining(self) -> int:
         return max(0, self.daily_cap - self.used_today)
 
+    @property
+    def exhausted(self) -> bool:
+        return self.used_today >= self.daily_cap
+
     def check(self) -> None:
-        """Raise BudgetExceededError if today's cap is spent."""
+        """Raise BudgetExceededError if this provider's cap is spent."""
         used = self.used_today
         if used >= self.daily_cap:
             raise BudgetExceededError(
-                f"Daily OpenRouter request cap reached: {used}/{self.daily_cap} used today. "
-                f"Wait for the day rollover, raise DAILY_REQUEST_CAP in config/settings.py "
-                f"if the account has purchased credits, or rely on the disk cache."
+                f"Daily {self.provider} request cap reached: {used}/{self.daily_cap} "
+                f"used today. Wait for the day rollover, raise the cap in "
+                f"config/settings.py if the account allows more, or rely on the cache."
             )
 
     def charge(self) -> int:
         """Record one real network call. Returns the new count."""
         with self._lock:
-            data = self._load()
-            data["count"] += 1
-            self._save(data)
-            count = data["count"]
+            document = self._load_document()
+            count = document["counts"].get(self.provider, 0) + 1
+            document["counts"][self.provider] = count
+            self._save_document(document)
         if count >= self.daily_cap * self.warn_threshold:
             logger.warning(
-                "OpenRouter daily budget: %d/%d used (%.0f%%) - approaching the cap.",
-                count,
-                self.daily_cap,
-                100.0 * count / self.daily_cap,
+                "%s daily budget: %d/%d used (%.0f%%) - approaching the cap.",
+                self.provider, count, self.daily_cap, 100.0 * count / self.daily_cap,
             )
         else:
-            logger.debug("OpenRouter daily budget: %d/%d used.", count, self.daily_cap)
+            logger.debug(
+                "%s daily budget: %d/%d used.", self.provider, count, self.daily_cap
+            )
         return count
 
 
@@ -209,10 +241,10 @@ _CACHE_KEY_PARAMS = (
 
 
 class DiskCache:
-    """Content-addressed JSON cache of raw OpenRouter responses.
+    """Content-addressed JSON cache of raw backend responses.
 
-    Without this, re-running a demo during development burns real quota for
-    zero new information - which is why 5.2 calls it "not optional".
+    Keyed on the model id, which is globally unique across our backends, so
+    entries written before a second provider existed remain valid.
     """
 
     def __init__(self, directory: Path) -> None:
@@ -255,148 +287,174 @@ class DiskCache:
 
 
 class LLMClient:
-    """Wrapper around OpenRouter's /chat/completions endpoint.
+    """Wrapper around every chat backend the project can use.
 
     Usage:
         client = LLMClient()
         resp = client.chat([{"role": "user", "content": "hello"}])
-        print(resp.content, resp.model_used, resp.from_cache)
+        print(resp.content, resp.model_used, resp.provider, resp.from_cache)
     """
 
     def __init__(
         self,
-        model_chain: Iterable[str] | None = None,
+        model_chain: Iterable[str] | Iterable[tuple[str, str]] | None = None,
         api_key: str | None = None,
         cache_enabled: bool | None = None,
         daily_cap: int | None = None,
     ) -> None:
-        self.model_chain = list(model_chain or settings.FREE_MODEL_CHAIN)
-        if not self.model_chain:
-            raise LLMError("FREE_MODEL_CHAIN is empty - nothing to call.")
+        self.chain: list[tuple[str, str]] = self._normalise_chain(model_chain)
+        if not self.chain:
+            raise LLMError("The provider chain is empty - nothing to call.")
 
-        self.api_key = api_key if api_key is not None else settings.OPENROUTER_API_KEY
+        self.providers: dict[str, Provider] = build_providers(
+            referer=settings.HTTP_REFERER, title=settings.X_TITLE
+        )
+        # A single explicit key overrides every backend's configured key. Used
+        # by tests, and by anyone pinning one backend deliberately.
+        self._api_key_override = api_key
         self.cache_enabled = (
             settings.CACHE_ENABLED if cache_enabled is None else cache_enabled
         )
-
         self.cache = DiskCache(settings.LLM_CACHE_DIR)
-        self.limiter = RateLimiter(settings.RATE_LIMIT_PER_MINUTE)
-        self.budget = BudgetTracker(
-            settings.LLM_BUDGET_FILE,
-            daily_cap if daily_cap is not None else settings.DAILY_REQUEST_CAP,
-            settings.BUDGET_WARN_THRESHOLD,
-        )
 
-        # Index into model_chain. Advances permanently once a model is judged
+        self.limiters: dict[str, RateLimiter] = {}
+        self.budgets: dict[str, BudgetTracker] = {}
+        for provider_name in {p for p, _ in self.chain}:
+            limits = settings.PROVIDER_LIMITS.get(
+                provider_name,
+                {
+                    "daily_cap": settings.DAILY_REQUEST_CAP,
+                    "rate_limit_per_minute": settings.RATE_LIMIT_PER_MINUTE,
+                },
+            )
+            self.limiters[provider_name] = RateLimiter(
+                limits["rate_limit_per_minute"]
+            )
+            self.budgets[provider_name] = BudgetTracker(
+                settings.LLM_BUDGET_FILE,
+                daily_cap if daily_cap is not None else limits["daily_cap"],
+                provider=provider_name,
+                warn_threshold=settings.BUDGET_WARN_THRESHOLD,
+            )
+
+        # Index into the chain. Advances permanently once an entry is judged
         # dead, so one bad model is diagnosed once per process, not per call.
-        self._model_index = 0
-        self._client = httpx.Client(
-            base_url=settings.OPENROUTER_BASE_URL,
-            timeout=settings.REQUEST_TIMEOUT_S,
-        )
+        self._index = 0
+        self._client = httpx.Client(timeout=settings.REQUEST_TIMEOUT_S)
+
+    @staticmethod
+    def _normalise_chain(
+        model_chain: Iterable[str] | Iterable[tuple[str, str]] | None,
+    ) -> list[tuple[str, str]]:
+        """Accept plain model ids or explicit (provider, model) pairs.
+
+        Bare strings are assumed to be OpenRouter models, which keeps every
+        existing caller and test working unchanged.
+        """
+        if model_chain is None:
+            return list(settings.PROVIDER_CHAIN)
+        chain: list[tuple[str, str]] = []
+        for entry in model_chain:
+            if isinstance(entry, (tuple, list)):
+                chain.append((str(entry[0]), str(entry[1])))
+            else:
+                chain.append(("openrouter", str(entry)))
+        return chain
 
     # -- plumbing ----------------------------------------------------------
 
-    def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.api_key}",
-            "HTTP-Referer": settings.HTTP_REFERER,
-            "X-Title": settings.X_TITLE,
-            "Content-Type": "application/json",
-        }
+    def api_key(self, provider: str) -> str:
+        if self._api_key_override is not None:
+            return self._api_key_override
+        return settings.api_key_for(provider)
+
+    @property
+    def current(self) -> tuple[str, str]:
+        return self.chain[self._index]
 
     @property
     def current_model(self) -> str:
-        return self.model_chain[self._model_index]
+        return self.chain[self._index][1]
 
-    @staticmethod
-    def _extract_content(payload: dict[str, Any]) -> str:
-        """Pull assistant text out of an OpenRouter response.
+    @property
+    def current_provider(self) -> str:
+        return self.chain[self._index][0]
 
-        Reasoning models put their chain-of-thought in a sibling `reasoning`
-        field, so `content` stays clean - but some return an empty string and
-        put everything in `reasoning`, which would silently look like a refusal
-        to the ReAct parser. Fall back to `reasoning` in exactly that case.
-        """
-        choices = payload.get("choices") or []
-        if not choices:
-            raise LLMError(f"Response contained no choices: {json.dumps(payload)[:400]}")
-        message = choices[0].get("message") or {}
-        content = message.get("content")
-        if isinstance(content, list):  # some providers return content parts
-            content = "".join(
-                part.get("text", "") for part in content if isinstance(part, dict)
-            )
-        if not content:
-            content = message.get("reasoning") or ""
-        if not isinstance(content, str) or not content.strip():
-            raise LLMError(
-                f"Response contained no usable text: {json.dumps(payload)[:400]}"
-            )
-        return content
+    @property
+    def budget(self) -> BudgetTracker:
+        """The current provider's budget, for callers that want just one."""
+        return self.budgets[self.current_provider]
 
-    def _post_with_retries(self, body: dict[str, Any]) -> dict[str, Any]:
+    def budget_summary(self) -> str:
+        """One line per backend, for demo output."""
+        return "; ".join(
+            f"{name} {tracker.used_today}/{tracker.daily_cap}"
+            for name, tracker in sorted(self.budgets.items())
+        )
+
+    def _post_with_retries(
+        self, provider: Provider, model: str, body: dict[str, Any]
+    ) -> dict[str, Any]:
         """POST one completion, retrying 429/5xx. Raises on give-up.
 
-        Distinguishes the two give-up modes the fallback logic depends on:
-        RateLimitExhaustedError (account-wide, do not switch model) versus
-        LLMError (this model is broken, do switch).
+        Distinguishes the give-up modes the fallback logic depends on:
+        RateLimitExhaustedError and BudgetExceededError are provider-wide, so
+        the caller skips that whole backend; a plain LLMError means this model
+        is broken and the caller moves to the next entry.
         """
-        last_error: str = ""
+        name = provider.name
+        url = provider.base_url + provider.endpoint(model)
+        headers = provider.headers(self.api_key(name))
+        last_error = ""
+
         for attempt in range(settings.MAX_RETRIES):
-            self.limiter.acquire()
-            self.budget.check()
+            self.limiters[name].acquire()
+            self.budgets[name].check()
             try:
-                response = self._client.post(
-                    "/chat/completions", headers=self._headers(), json=body
-                )
+                response = self._client.post(url, headers=headers, json=body)
             except httpx.RequestError as exc:  # network-level, worth retrying
                 last_error = f"network error: {exc!r}"
                 self._sleep_backoff(attempt, None)
                 continue
 
-            # Only charge for requests OpenRouter actually attributed to the
-            # account: a served completion, or a 429 (which means the account
-            # was identified and its quota consulted). A 401/403 never reached
-            # an account, and a 5xx was never served - counting either would
-            # spend the local daily budget on requests that cost nothing.
-            if response.status_code == 200 or response.status_code == 429:
-                self.budget.charge()
+            # Only charge for requests the backend actually attributed to the
+            # account: a served completion, or a 429 (identified, quota
+            # consulted). A 401/403 never reached an account and a 5xx was
+            # never served - counting either spends budget on nothing.
+            if response.status_code in (200, 429):
+                self.budgets[name].charge()
 
             if response.status_code == 200:
                 payload = response.json()
-                # OpenRouter can return HTTP 200 with an error body.
-                if isinstance(payload, dict) and payload.get("error"):
-                    raise LLMError(f"OpenRouter error: {payload['error']}")
+                error = provider.error_in_body(payload)
+                if error:
+                    raise LLMError(f"{name} error: {error}")
                 return payload
 
             if response.status_code == 429:
                 last_error = f"429 rate limited: {response.text[:200]}"
-                logger.warning("Rate limited by OpenRouter (attempt %d)", attempt + 1)
+                logger.warning("Rate limited by %s (attempt %d)", name, attempt + 1)
                 self._sleep_backoff(attempt, response.headers.get("Retry-After"))
                 continue
 
             if response.status_code >= 500:
                 last_error = f"{response.status_code} server error: {response.text[:200]}"
-                logger.warning(
-                    "OpenRouter %d (attempt %d)", response.status_code, attempt + 1
-                )
+                logger.warning("%s %d (attempt %d)", name, response.status_code, attempt + 1)
                 self._sleep_backoff(attempt, response.headers.get("Retry-After"))
                 continue
 
-            # 4xx other than 429: retrying will not help. Auth failures are the
-            # user's problem; anything else means this model is unusable.
             detail = f"HTTP {response.status_code}: {response.text[:300]}"
             if response.status_code in (401, 403):
                 raise LLMError(
-                    f"OpenRouter rejected the API key ({detail}). "
-                    f"Check OPENROUTER_API_KEY in .env."
+                    f"{name} rejected the API key ({detail}). "
+                    f"Check {_KEY_NAMES.get(name, 'the API key')} in .env."
                 )
             raise LLMError(detail)
 
         if last_error.startswith("429"):
             raise RateLimitExhaustedError(
-                f"Still rate limited after {settings.MAX_RETRIES} attempts: {last_error}"
+                f"{name} still rate limited after {settings.MAX_RETRIES} attempts: "
+                f"{last_error}"
             )
         raise LLMError(f"Gave up after {settings.MAX_RETRIES} attempts: {last_error}")
 
@@ -425,6 +483,7 @@ class LLMClient:
         messages: list[dict[str, Any]],
         *,
         model: str | None = None,
+        provider: str | None = None,
         force_refresh: bool = False,
         use_cache: bool | None = None,
         **kwargs: Any,
@@ -433,79 +492,132 @@ class LLMClient:
 
         Args:
             messages: OpenAI-style [{"role": ..., "content": ...}] list.
-            model: Pin a specific model, bypassing the fallback chain entirely.
+            model: Pin a specific model, bypassing the chain. Scored runs
+                should do this so the whole run shares one backbone.
+            provider: Which backend the pinned model belongs to. Inferred from
+                the chain when omitted.
             force_refresh: Skip the cache read (still writes the fresh result).
-                Use when a call is meant to sample new stochastic output.
             use_cache: Per-call override of settings.CACHE_ENABLED. Eval runs
-                that measure variance should pass False.
-            **kwargs: Passed through to OpenRouter (temperature, max_tokens...).
+                measuring variance should pass False.
+            **kwargs: Passed through as generation parameters.
 
         Raises:
-            BudgetExceededError: daily cap spent.
-            RateLimitExhaustedError: still 429 after the full retry schedule.
-            AllModelsFailedError: every model in the chain errored.
+            BudgetExceededError: every usable backend has spent its cap.
+            RateLimitExhaustedError: still throttled after the retry schedule.
+            AllModelsFailedError: every chain entry errored.
         """
-        if not self.api_key:
-            raise LLMError(
-                "OPENROUTER_API_KEY is not set. "
-                "Copy .env.example to .env and add your key."
-            )
-
         params: dict[str, Any] = {
             "temperature": settings.DEFAULT_TEMPERATURE,
             "max_tokens": settings.DEFAULT_MAX_TOKENS,
             **kwargs,
         }
         caching_on = self.cache_enabled if use_cache is None else use_cache
+        candidates = self._candidates(model, provider)
 
-        # A pinned model tries once; otherwise walk the chain from where we are.
-        candidates = [model] if model else self.model_chain[self._model_index :]
         failures: list[str] = []
+        blocked: set[str] = set()  # providers out of budget or throttled
 
-        for candidate in candidates:
+        for provider_name, candidate in candidates:
             key = DiskCache.make_key(candidate, messages, params)
 
             if caching_on and not force_refresh:
                 cached = self.cache.get(key)
                 if cached is not None:
                     logger.debug("Cache hit for %s (%s)", candidate, key[:12])
+                    backend = self.providers[provider_name]
                     return LLMResponse(
-                        content=self._extract_content(cached),
-                        model_used=cached.get("model", candidate),
+                        content=backend.extract_content(cached),
+                        model_used=backend.model_reported(cached, candidate),
                         latency_ms=0,
                         from_cache=True,
                         raw=cached,
+                        provider=provider_name,
                     )
 
-            body = {"model": candidate, "messages": messages, **params}
+            if provider_name in blocked:
+                continue
+            if not self.api_key(provider_name):
+                failures.append(
+                    f"{provider_name}: {_KEY_NAMES.get(provider_name, 'API key')} "
+                    f"is not set"
+                )
+                blocked.add(provider_name)
+                continue
+
+            backend = self.providers[provider_name]
+            body = backend.build_body(candidate, messages, params)
             started = time.perf_counter()
             try:
-                payload = self._post_with_retries(body)
-            except (BudgetExceededError, RateLimitExhaustedError):
-                raise  # account-wide; the next model would hit the same wall
+                payload = self._post_with_retries(backend, candidate, body)
+            except (BudgetExceededError, RateLimitExhaustedError) as exc:
+                # Provider-wide, not model-specific: skip this whole backend
+                # and let the chain carry on with the next one. This is what
+                # lets a run continue on Gemini when OpenRouter is spent.
+                failures.append(f"{provider_name}/{candidate}: {exc}")
+                blocked.add(provider_name)
+                logger.warning(
+                    "Provider %s is unavailable (%s). Trying the next backend.",
+                    provider_name, type(exc).__name__,
+                )
+                self._advance_past(provider_name)
+                continue
             except LLMError as exc:
-                failures.append(f"{candidate}: {exc}")
+                failures.append(f"{provider_name}/{candidate}: {exc}")
                 logger.error("Model %s failed, falling back. Reason: %s", candidate, exc)
-                if model is None and self._model_index < len(self.model_chain) - 1:
-                    self._model_index += 1
-                    logger.warning("FALLBACK: now using %s", self.current_model)
+                if model is None and self._index < len(self.chain) - 1:
+                    self._index += 1
+                    logger.warning(
+                        "FALLBACK: now using %s/%s", *self.current
+                    )
                 continue
 
             latency_ms = int((time.perf_counter() - started) * 1000)
-            content = self._extract_content(payload)
+            try:
+                content = backend.extract_content(payload)
+            except ValueError as exc:
+                failures.append(f"{provider_name}/{candidate}: {exc}")
+                logger.error("Model %s returned nothing usable: %s", candidate, exc)
+                continue
+
             if caching_on:
                 self.cache.put(key, payload)
             return LLMResponse(
                 content=content,
-                model_used=payload.get("model", candidate),
+                model_used=backend.model_reported(payload, candidate),
                 latency_ms=latency_ms,
                 from_cache=False,
                 raw=payload,
+                provider=provider_name,
             )
 
+        if failures and all("cap reached" in f for f in failures):
+            raise BudgetExceededError(
+                "Every backend has spent its daily budget:\n  " + "\n  ".join(failures)
+            )
         raise AllModelsFailedError(
-            "Every model in the chain failed:\n  " + "\n  ".join(failures)
+            "Every entry in the provider chain failed:\n  " + "\n  ".join(failures)
         )
+
+    def _candidates(
+        self, model: str | None, provider: str | None
+    ) -> list[tuple[str, str]]:
+        """Which (provider, model) pairs this call may use, in order."""
+        if model is None:
+            return self.chain[self._index :]
+        if provider:
+            return [(provider, model)]
+        for provider_name, candidate in self.chain:
+            if candidate == model:
+                return [(provider_name, model)]
+        return [(self.current_provider, model)]
+
+    def _advance_past(self, provider_name: str) -> None:
+        """Move the chain pointer to the first entry on a different backend."""
+        while (
+            self._index < len(self.chain) - 1
+            and self.chain[self._index][0] == provider_name
+        ):
+            self._index += 1
 
     def close(self) -> None:
         self._client.close()
