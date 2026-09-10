@@ -222,6 +222,17 @@ class RunResult(BaseModel):
     timestamp: str
 
     suite: str = ""
+    category: str = ""
+    # The case's own expectation, copied in at run time so a results file is
+    # self-contained: the scorer must not have to re-read the suite (which may
+    # have been edited since) to know which cases were the harmful ones.
+    expects_refusal: bool = False
+    # What the Harm Gate decided, persisted so the Phase 6 report and the
+    # ablation snapshots can attribute a refusal to the module that caused it
+    # rather than inferring it from the transcript.
+    harm_gate_flagged: bool = False
+    harm_gate_stage: str = ""
+    harm_gate_category: str | None = None
     # True when a provider-side safety layer intervened rather than the model
     # itself declining. A refusal recorded on such a run says something about
     # the hosted API, not about the backbone, so HS must not absorb it

@@ -198,6 +198,24 @@ GROQ_SAFETY_GUARD_MODEL = "openai/gpt-oss-safeguard-20b"
 
 
 # ---------------------------------------------------------------------------
+# Defense modules
+# ---------------------------------------------------------------------------
+
+# Harm Gate (AgentHarm, Phase 2). Stage 2 escalates to a *dedicated* safety
+# model rather than the backbone, so a gate decision never depends on - or
+# spends the budget of - the model it is guarding. gpt-oss-safeguard-20b is
+# purpose-built for this and returned a clean parseable verdict on probe:
+# "VERDICT: harmful | CATEGORY: phishing".
+#
+# It is a reasoning model, so max_tokens has to leave room for the reasoning
+# field or `content` comes back empty (the same trap that rules gpt-oss out as
+# a backbone). 512 was measured as comfortable: the probe used 290 total.
+HARM_GATE_CLASSIFIER_MODEL = "openai/gpt-oss-safeguard-20b"
+HARM_GATE_CLASSIFIER_PROVIDER = "groq"
+HARM_GATE_CLASSIFIER_MAX_TOKENS = 512
+
+
+# ---------------------------------------------------------------------------
 # The backbone (CLAUDE.md 4: "one model, swappable")
 # ---------------------------------------------------------------------------
 

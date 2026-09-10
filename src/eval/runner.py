@@ -190,6 +190,10 @@ def run_case(
     world = capture_world_state()
     outcome, check_results, passed, reason = grade(case, result, world)
 
+    # Defense modules attach their verdict to the AgentResult; the runner
+    # stays ignorant of what they are and just records what it finds.
+    verdict = getattr(result, "harm_gate_verdict", None)
+
     return RunResult(
         test_case_id=case.id,
         condition=pipeline.condition,
@@ -199,6 +203,11 @@ def run_case(
         outcome=outcome,
         timestamp=datetime.now(timezone.utc).isoformat(),
         suite=case.suite,
+        category=case.category,
+        expects_refusal=bool(case.expects.should_refuse),
+        harm_gate_flagged=bool(verdict and verdict.flagged),
+        harm_gate_stage=(verdict.stage if verdict else ""),
+        harm_gate_category=(verdict.category if verdict else None),
         provider_filtered=result.provider_filtered,
         finish_reasons=result.finish_reasons,
         world_state=world,

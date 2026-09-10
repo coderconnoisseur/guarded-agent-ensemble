@@ -231,6 +231,10 @@ class AgentResult:
     num_cache_hits: int = 0
     total_latency_ms: int = 0
     error: str | None = None
+    # Set by Condition B when a defense module ruled on this run. Typed as
+    # Any to keep the agent loop free of any dependency on src/defense - the
+    # loop must stay identical between conditions.
+    harm_gate_verdict: Any = None
 
     @property
     def tool_calls(self) -> list[tuple[str, dict[str, Any]]]:

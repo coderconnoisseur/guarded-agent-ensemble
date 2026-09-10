@@ -397,8 +397,33 @@ class LLMClient:
         return self.chain[self._index][0]
 
     def budget_for(self, provider: str, model: str) -> BudgetTracker:
-        """The counter a (provider, model) pair is charged against."""
-        return self.budgets[settings.budget_key(provider, model)]
+        """The counter a (provider, model) pair is charged against.
+
+        Created on demand for models that are not in the chain. Defense
+        modules call auxiliary models - a safety classifier, an injection
+        detector - which are deliberately off-chain because they must never
+        become the backbone. Their quota still has to be tracked.
+        """
+        key = settings.budget_key(provider, model)
+        if key not in self.budgets:
+            limits = settings.PROVIDER_LIMITS.get(
+                provider,
+                {
+                    "daily_cap": settings.DAILY_REQUEST_CAP,
+                    "rate_limit_per_minute": settings.RATE_LIMIT_PER_MINUTE,
+                },
+            )
+            self.limiters.setdefault(
+                provider, RateLimiter(limits["rate_limit_per_minute"])
+            )
+            self.budgets[key] = BudgetTracker(
+                settings.LLM_BUDGET_FILE,
+                limits["daily_cap"],
+                provider=key,
+                warn_threshold=settings.BUDGET_WARN_THRESHOLD,
+            )
+            logger.debug("Tracking off-chain model %s", key)
+        return self.budgets[key]
 
     @property
     def budget(self) -> BudgetTracker:
