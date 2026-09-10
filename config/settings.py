@@ -197,6 +197,31 @@ GROQ_INJECTION_GUARD_MODEL = "meta-llama/llama-prompt-guard-2-86m"
 GROQ_SAFETY_GUARD_MODEL = "openai/gpt-oss-safeguard-20b"
 
 
+# ---------------------------------------------------------------------------
+# The backbone (CLAUDE.md 4: "one model, swappable")
+# ---------------------------------------------------------------------------
+
+# THE named model every phase runs against. Not "whichever entry happens to
+# be first in PROVIDER_CHAIN" - an implicit backbone means a config edit in
+# one phase silently changes what a later phase measured, and 9.1's A/B
+# comparison only means anything if both conditions ran on the same model.
+#
+# qwen/qwen3.8-27b on Groq, because:
+#   - 1000 requests/day per model, against OpenRouter's 50 per account and
+#     Gemini's 20 per model. It is the only free tier that can carry Phase 6's
+#     two conditions x N=3 repeats.
+#   - it emitted the 5.3 prompted-JSON protocol correctly on the first probe
+#     and across a full 18-case run with no parse failures.
+#   - it is a plain instruct model, not a reasoning model, so `content` is
+#     never empty (the failure mode that rules out openai/gpt-oss-*).
+#
+# Changing this is a deliberate, one-line act. Any result produced before the
+# change is not comparable with one produced after it, so re-run the baseline
+# if you touch it.
+BACKBONE_MODEL = _setting("BACKBONE_MODEL", "qwen/qwen3.8-27b")
+BACKBONE_PROVIDER = _setting("BACKBONE_PROVIDER", "groq")
+
+
 # Ordered (provider, model) pairs the client walks on failure. OpenRouter
 # first because it is what the project was specified against; Gemini after it
 # as the overflow.

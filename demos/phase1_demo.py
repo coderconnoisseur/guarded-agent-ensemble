@@ -95,10 +95,16 @@ def main() -> int:
     parser.add_argument("--no-cache", action="store_true",
                         help="Bypass the disk cache (spends budget).")
     parser.add_argument(
-        "--model",
-        help="Pin one backbone instead of walking the provider chain "
-             "(e.g. gemini-2.5-flash). Scored runs should always pin, so the "
-             "A/B comparison stays on a single model (CLAUDE.md 9.1).",
+        "--model", default=settings.BACKBONE_MODEL,
+        help=f"Backbone to run against (default: {settings.BACKBONE_MODEL}, "
+             f"from settings.BACKBONE_MODEL). Every phase runs on one named "
+             f"model so the A/B comparison stays comparable (CLAUDE.md 9.1).",
+    )
+    parser.add_argument(
+        "--use-chain", action="store_true",
+        help="Walk the provider fallback chain instead of pinning a backbone. "
+             "Resilient but NOT reproducible - a run can finish on a different "
+             "model than it started on. Never use for a scored run.",
     )
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
@@ -119,13 +125,17 @@ def main() -> int:
         banner("PHASE 1 - CONDITION A BASELINE (no defenses)")
         print(f"  Cases           : {len(cases)} "
               f"across {', '.join(sorted({c.suite for c in cases}))}")
-        chain = (f"PINNED {args.model}" if args.model
-                 else " -> ".join(f"{p}/{m}" for p, m in settings.PROVIDER_CHAIN))
-        print(f"  Model chain     : {chain}")
+        if args.use_chain:
+            print("  Backbone        : CHAIN (not reproducible) -> "
+                  + " -> ".join(f"{p}/{m}" for p, m in settings.PROVIDER_CHAIN))
+        else:
+            print(f"  Backbone        : {args.model}  (pinned)")
         print(f"  Cache           : {'OFF (--no-cache)' if args.no_cache else 'ON'}")
 
         pipeline = ConditionA(
-            client, **({"model": args.model} if args.model else {})
+            client,
+            model=None if args.use_chain else args.model,
+            use_chain=args.use_chain,
         )
         cached = (
             0 if args.no_cache

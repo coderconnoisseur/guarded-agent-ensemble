@@ -32,19 +32,34 @@ from src.eval.schemas import SuiteReport, load_suites  # noqa: E402
 
 RULE = "=" * 78
 THIN = "-" * 78
-DEFAULT_RESULTS = "results/phase1_condition_a.json"
+DEFAULT_RESULTS = ""  # newest file in results/ when unset
 
 
 def banner(title: str) -> None:
     print(f"\n{RULE}\n{title}\n{RULE}")
 
 
-def load_report(path: Path) -> SuiteReport:
-    if not path.exists():
+def newest_results() -> Path:
+    """Most recently written results file. Runs are per backbone now."""
+    files = sorted(
+        settings.RESULTS_DIR.glob("phase*_condition_*.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not files:
         raise SystemExit(
-            f"No results at {path}. Run `python demos/phase1_demo.py` first."
+            "No results yet. Run `python demos/phase1_demo.py` first."
         )
-    return SuiteReport.model_validate_json(path.read_text(encoding="utf-8"))
+    return files[0]
+
+
+def load_report(path: Path | None) -> SuiteReport:
+    target = path or newest_results()
+    if not target.exists():
+        raise SystemExit(
+            f"No results at {target}. Run `python demos/phase1_demo.py` first."
+        )
+    return SuiteReport.model_validate_json(target.read_text(encoding="utf-8"))
 
 
 def print_index(report: SuiteReport) -> None:
@@ -142,10 +157,11 @@ def main() -> int:
     parser.add_argument("case_id", nargs="?", help="Case to show, e.g. inj_001.")
     parser.add_argument("--list", action="store_true", help="List cases and exit.")
     parser.add_argument("--results", default=DEFAULT_RESULTS,
-                        help=f"Results file (default: {DEFAULT_RESULTS}).")
+                        help="Results file (default: the newest in results/).")
     args = parser.parse_args()
 
-    report = load_report(Path(args.results))
+    report = load_report(Path(args.results) if args.results else None)
+    print(f"(reading {args.results or newest_results()})")
     if args.list or not args.case_id:
         print_index(report)
         return 0

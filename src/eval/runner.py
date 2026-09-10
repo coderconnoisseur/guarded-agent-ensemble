@@ -24,6 +24,7 @@ folder. This is a scoping decision, not an oversight.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
@@ -248,9 +249,25 @@ def load_cases(
     return cases
 
 
-def write_report(report: SuiteReport, path: Path | None = None) -> Path:
-    """Persist the run to results/ (gitignored)."""
-    target = path or settings.RESULTS_DIR / f"phase1_condition_{report.condition.lower()}.json"
-    written = report.write(target)
+def _slug(text: str) -> str:
+    """Filesystem-safe form of a model id (they contain / and :)."""
+    return re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-").lower() or "unknown"
+
+
+def write_report(
+    report: SuiteReport, path: Path | None = None, phase: str = "phase1"
+) -> Path:
+    """Persist the run to results/ (gitignored).
+
+    The filename carries the backbone, not just the condition. Earlier runs
+    all wrote `phase1_condition_a.json`, so each new backbone silently
+    destroyed the previous one's evidence - a cross-model comparison then had
+    nothing behind it but numbers quoted from a terminal that had scrolled
+    away. Runs now accumulate instead.
+    """
+    if path is None:
+        name = f"{phase}_condition_{report.condition.lower()}_{_slug(report.backbone_model)}.json"
+        path = settings.RESULTS_DIR / name
+    written = report.write(path)
     logger.info("Wrote %d result(s) to %s", len(report.results), written)
     return written

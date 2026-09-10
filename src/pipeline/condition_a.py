@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from config import settings
 from src.agent.loop import AgentResult, ReActAgent
 from src.llm.client import LLMClient
 from src.tools.registry import ToolRegistry, build_default_registry
@@ -43,6 +44,8 @@ class ConditionA:
         client: LLMClient,
         registry: ToolRegistry | None = None,
         enabled_modules: set[str] | None = None,
+        model: str | None = None,
+        use_chain: bool = False,
         **agent_kwargs: Any,
     ) -> None:
         if enabled_modules:
@@ -53,6 +56,14 @@ class ConditionA:
         self.client = client
         self.registry = registry if registry is not None else build_default_registry()
         self.enabled_modules: frozenset[str] = frozenset()
+
+        # Pin the configured backbone unless a caller deliberately opts into
+        # the fallback chain. An eval harness needs reproducibility more than
+        # it needs resilience: silently finishing a run on a different model
+        # produces a number that looks fine and means nothing.
+        self.model = model or (None if use_chain else settings.BACKBONE_MODEL)
+        if self.model:
+            agent_kwargs.setdefault("model", self.model)
         self.agent = ReActAgent(self.client, self.registry, **agent_kwargs)
 
     def run(self, task: str) -> AgentResult:
