@@ -47,7 +47,11 @@ from src.llm.providers import Provider, build_providers
 logger = logging.getLogger(__name__)
 
 # Human-facing name of the credential each backend needs, for error messages.
-_KEY_NAMES = {"openrouter": "OPENROUTER_API_KEY", "gemini": "GEMINI_API_KEY"}
+_KEY_NAMES = {
+    "openrouter": "OPENROUTER_API_KEY",
+    "gemini": "GEMINI_API_KEY",
+    "groq": "GROQ_API_KEY",
+}
 
 
 # ---------------------------------------------------------------------------

@@ -24,7 +24,12 @@ from src.llm.client import (
     DiskCache,
     LLMClient,
 )
-from src.llm.providers import GeminiProvider, OpenRouterProvider, build_providers
+from src.llm.providers import (
+    GeminiProvider,
+    GroqProvider,
+    OpenRouterProvider,
+    build_providers,
+)
 
 
 @pytest.fixture
@@ -183,8 +188,34 @@ class TestOpenRouterUnchanged:
         payload = {"choices": [{"message": {"content": "", "reasoning": "Final: 42"}}]}
         assert OpenRouterProvider().extract_content(payload) == "Final: 42"
 
-    def test_registry_exposes_both_backends(self):
-        assert set(build_providers()) == {"openrouter", "gemini"}
+    def test_registry_exposes_every_backend(self):
+        assert set(build_providers()) == {"openrouter", "gemini", "groq"}
+
+    def test_groq_shares_the_openai_wire_format(self):
+        """Groq is OpenAI-compatible, so only the endpoint should differ."""
+        groq, openrouter = GroqProvider(), OpenRouterProvider()
+        messages = [{"role": "user", "content": "hi"}]
+        assert groq.build_body("m", messages, {"temperature": 0}) == (
+            openrouter.build_body("m", messages, {"temperature": 0})
+        )
+        assert groq.base_url != openrouter.base_url
+        assert "groq.com" in groq.base_url
+
+    def test_groq_does_not_send_openrouter_ranking_headers(self):
+        headers = GroqProvider().headers("k")
+        assert headers["Authorization"] == "Bearer k"
+        assert "HTTP-Referer" not in headers
+        assert "X-Title" not in headers
+
+    def test_reasoning_only_response_warns(self, caplog):
+        """gpt-oss returns empty content with the budget spent on reasoning.
+
+        Falling back silently would feed chain-of-thought to the ReAct parser.
+        """
+        payload = {"choices": [{"message": {"content": "", "reasoning": "thinking..."}}]}
+        with caplog.at_level("WARNING"):
+            assert GroqProvider().extract_content(payload) == "thinking..."
+        assert any("reasoning" in r.message for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

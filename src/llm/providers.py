@@ -73,15 +73,13 @@ class Provider(ABC):
 # ---------------------------------------------------------------------------
 
 
-class OpenRouterProvider(Provider):
-    """OpenAI-compatible chat completions (CLAUDE.md 5.2 point 1)."""
+class OpenAICompatibleProvider(Provider):
+    """Shared behaviour for backends that speak the OpenAI chat shape.
 
-    name = "openrouter"
-    base_url = "https://openrouter.ai/api/v1"
-
-    def __init__(self, referer: str = "", title: str = "") -> None:
-        self.referer = referer
-        self.title = title
+    OpenRouter and Groq differ only in base URL and auth headers, so the
+    request/response handling lives here once rather than being copied and
+    left to drift apart.
+    """
 
     def endpoint(self, model: str) -> str:
         return "/chat/completions"
@@ -89,9 +87,6 @@ class OpenRouterProvider(Provider):
     def headers(self, api_key: str) -> dict[str, str]:
         return {
             "Authorization": f"Bearer {api_key}",
-            # OpenRouter uses these for its public rankings; free, harmless.
-            "HTTP-Referer": self.referer,
-            "X-Title": self.title,
             "Content-Type": "application/json",
         }
 
@@ -112,11 +107,58 @@ class OpenRouterProvider(Provider):
             )
         if not content:
             # Reasoning models sometimes leave `content` empty and put
-            # everything in `reasoning`, which would look like a refusal.
+            # everything in `reasoning`, which would otherwise look like a
+            # refusal. Falling back keeps the call usable, but the text is
+            # chain-of-thought rather than an answer, so the agent's protocol
+            # parser will probably reject it - warn rather than fail silently.
+            # openai/gpt-oss-* on Groq does this whenever max_tokens is small
+            # enough that reasoning consumes the whole budget.
             content = message.get("reasoning") or ""
+            if content.strip():
+                logger.warning(
+                    "Model returned empty content; falling back to its reasoning "
+                    "field. Raise max_tokens or choose a non-reasoning model."
+                )
         if not isinstance(content, str) or not content.strip():
             raise ValueError("response contained no usable text")
         return content
+
+
+class OpenRouterProvider(OpenAICompatibleProvider):
+    """OpenRouter's aggregator API (CLAUDE.md 5.2 point 1)."""
+
+    name = "openrouter"
+    base_url = "https://openrouter.ai/api/v1"
+
+    def __init__(self, referer: str = "", title: str = "") -> None:
+        self.referer = referer
+        self.title = title
+
+    def headers(self, api_key: str) -> dict[str, str]:
+        return {
+            **super().headers(api_key),
+            # OpenRouter uses these for its public rankings; free, harmless.
+            "HTTP-Referer": self.referer,
+            "X-Title": self.title,
+        }
+
+
+class GroqProvider(OpenAICompatibleProvider):
+    """Groq's inference API - OpenAI-compatible, so only the endpoint differs.
+
+    Measured on 2026-09-11 from its own response headers, which are the
+    authoritative source rather than the published ranges: 1000 requests/day
+    and 8000 tokens/minute per model on the free tier, with each model
+    carrying its own independent bucket.
+
+    The token ceiling binds before the request ceiling for this project - a
+    ReAct turn carries the tool catalogue plus a growing transcript - which is
+    why the configured per-minute rate is well below what the request quota
+    alone would allow.
+    """
+
+    name = "groq"
+    base_url = "https://api.groq.com/openai/v1"
 
 
 # ---------------------------------------------------------------------------
@@ -220,4 +262,5 @@ def build_providers(referer: str = "", title: str = "") -> dict[str, Provider]:
     return {
         OpenRouterProvider.name: OpenRouterProvider(referer=referer, title=title),
         GeminiProvider.name: GeminiProvider(),
+        GroqProvider.name: GroqProvider(),
     }

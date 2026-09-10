@@ -152,6 +152,51 @@ GEMINI_DAILY_REQUEST_CAP = int(_setting("GEMINI_DAILY_REQUEST_CAP", "20") or 20)
 GEMINI_RATE_LIMIT_PER_MINUTE = 10
 
 
+# ---------------------------------------------------------------------------
+# Groq (third backend, largest free-tier headroom)
+# ---------------------------------------------------------------------------
+
+GROQ_API_KEY = _setting("GROQ_API_KEY")
+
+# MEASURED on 2026-09-11 from Groq's own x-ratelimit-* response headers rather
+# than the published ranges, which span 100-14.4K RPD and say little about a
+# specific model:
+#
+#   openai/gpt-oss-20b / -120b, qwen/qwen3.x-27b : 1000 req/day, 8000 tok/min
+#   meta-llama/llama-prompt-guard-2-86m          : 14400 req/day, 15000 tok/min
+#
+# Each model reported its own independent remaining count, so the quota is per
+# model, as Gemini's is.
+#
+# Backbone choice: qwen/qwen3.8-27b returned the 5.3 protocol cleanly on the
+# first probe ("Final: 4"). The openai/gpt-oss-* models are deliberately NOT
+# in this chain - they are reasoning models that returned an empty `content`
+# with the whole token budget spent in `reasoning`, which the agent's parser
+# would have to reject.
+GROQ_MODEL_CHAIN = [
+    "qwen/qwen3.8-27b",
+    "qwen/qwen3.6-27b",
+]
+
+GROQ_DAILY_REQUEST_CAP = int(_setting("GROQ_DAILY_REQUEST_CAP", "1000") or 1000)
+
+# Token-bound, not request-bound. At 8000 tokens/minute and roughly 1000-1500
+# tokens per ReAct turn (tool catalogue + growing transcript), about 6 calls a
+# minute is the real ceiling; the 1000/day request quota never binds first.
+GROQ_RATE_LIMIT_PER_MINUTE = 6
+
+# Purpose-built safety models on the same key, for later phases rather than
+# the backbone. Recorded here so the phase that needs them does not have to
+# rediscover them:
+#   meta-llama/llama-prompt-guard-2-86m  - prompt-injection detector, returns a
+#       probability. Directly relevant to Phase 4's Response Firewall
+#       (ShieldMCP Stage 3, scanning tool responses). 14400/day.
+#   openai/gpt-oss-safeguard-20b         - safety classifier, relevant to
+#       Phase 2's Harm Gate.
+GROQ_INJECTION_GUARD_MODEL = "meta-llama/llama-prompt-guard-2-86m"
+GROQ_SAFETY_GUARD_MODEL = "openai/gpt-oss-safeguard-20b"
+
+
 # Ordered (provider, model) pairs the client walks on failure. OpenRouter
 # first because it is what the project was specified against; Gemini after it
 # as the overflow.
@@ -160,7 +205,11 @@ GEMINI_RATE_LIMIT_PER_MINUTE = 10
 # which §9.1's A/B comparison cannot tolerate. The client logs every switch
 # loudly and each run result records the model that served it - but a scored
 # run should pin one model explicitly rather than rely on the chain.
+# Groq leads because its free tier is the only one with enough headroom to run
+# a full A/B evaluation: 1000/day per model against OpenRouter's 50/day per
+# account and Gemini's 20/day per model.
 PROVIDER_CHAIN: list[tuple[str, str]] = [
+    *(("groq", model) for model in GROQ_MODEL_CHAIN),
     *(("openrouter", model) for model in FREE_MODEL_CHAIN),
     *(("gemini", model) for model in GEMINI_MODEL_CHAIN),
 ]
@@ -182,6 +231,11 @@ PROVIDER_LIMITS: dict[str, dict] = {
         "rate_limit_per_minute": GEMINI_RATE_LIMIT_PER_MINUTE,
         "budget_scope": "model",
     },
+    "groq": {
+        "daily_cap": GROQ_DAILY_REQUEST_CAP,
+        "rate_limit_per_minute": GROQ_RATE_LIMIT_PER_MINUTE,
+        "budget_scope": "model",
+    },
 }
 
 
@@ -199,6 +253,7 @@ def api_key_for(provider: str) -> str:
     return {
         "openrouter": OPENROUTER_API_KEY,
         "gemini": GEMINI_API_KEY,
+        "groq": GROQ_API_KEY,
     }.get(provider, "")
 
 
