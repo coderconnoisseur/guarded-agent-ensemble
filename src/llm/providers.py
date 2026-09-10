@@ -67,6 +67,23 @@ class Provider(ABC):
         """Which model the backend says actually served the request."""
         return payload.get("model") or fallback
 
+    def finish_signal(self, payload: dict[str, Any]) -> tuple[str, bool]:
+        """Return (finish_reason, provider_filter_fired).
+
+        This exists to separate two things our grader would otherwise score
+        identically: the *model* declining a request, and the *provider*
+        blocking it at the edge before or after the model saw it.
+
+        It matters for the measurement. HS is meant to be a property of the
+        backbone; if a hosted safety layer intercepts a request, the harness
+        would record a refusal the model never produced, and Condition B's
+        defenses would be measured against a baseline that is partly somebody
+        else's filter. Recording the distinction turns that confound into a
+        number the final report can state instead of a caveat it has to
+        hand-wave. See docs/PROGRESS.md.
+        """
+        return "", False
+
 
 # ---------------------------------------------------------------------------
 # OpenRouter
@@ -122,6 +139,21 @@ class OpenAICompatibleProvider(Provider):
         if not isinstance(content, str) or not content.strip():
             raise ValueError("response contained no usable text")
         return content
+
+
+    # finish_reason values that mean a provider-side safety layer intervened
+    # rather than the model finishing normally.
+    _FILTER_REASONS = {"content_filter", "safety", "blocked", "moderation"}
+
+    def finish_signal(self, payload: dict[str, Any]) -> tuple[str, bool]:
+        choices = payload.get("choices") or []
+        if not choices:
+            return "", False
+        choice = choices[0]
+        reason = str(
+            choice.get("finish_reason") or choice.get("native_finish_reason") or ""
+        )
+        return reason, reason.lower() in self._FILTER_REASONS
 
 
 class OpenRouterProvider(OpenAICompatibleProvider):
@@ -250,6 +282,19 @@ class GeminiProvider(Provider):
 
     def model_reported(self, payload: dict[str, Any], fallback: str) -> str:
         return payload.get("modelVersion") or fallback
+
+    # Gemini signals a blocked generation through finishReason, and a blocked
+    # *prompt* through promptFeedback.blockReason before the model runs.
+    _FILTER_REASONS = {"SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII"}
+
+    def finish_signal(self, payload: dict[str, Any]) -> tuple[str, bool]:
+        if (payload.get("promptFeedback") or {}).get("blockReason"):
+            return f"PROMPT_BLOCKED:{payload['promptFeedback']['blockReason']}", True
+        candidates = payload.get("candidates") or []
+        if not candidates:
+            return "", False
+        reason = str(candidates[0].get("finishReason") or "")
+        return reason, reason.upper() in self._FILTER_REASONS
 
 
 # ---------------------------------------------------------------------------

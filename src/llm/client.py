@@ -94,6 +94,11 @@ class LLMResponse(BaseModel):
     from_cache: bool
     raw: dict[str, Any] = Field(default_factory=dict)
     provider: str = ""
+    # Why generation stopped, and whether a provider-side safety layer caused
+    # it. Recorded so a hosted filter cannot be mistaken for the model itself
+    # refusing - see Provider.finish_signal.
+    finish_reason: str = ""
+    provider_filtered: bool = False
 
     @property
     def usage(self) -> dict[str, Any]:
@@ -570,6 +575,7 @@ class LLMClient:
                 if cached is not None:
                     logger.debug("Cache hit for %s (%s)", candidate, key[:12])
                     backend = self.providers[provider_name]
+                    reason, filtered = backend.finish_signal(cached)
                     return LLMResponse(
                         content=backend.extract_content(cached),
                         model_used=backend.model_reported(cached, candidate),
@@ -577,6 +583,8 @@ class LLMClient:
                         from_cache=True,
                         raw=cached,
                         provider=provider_name,
+                        finish_reason=reason,
+                        provider_filtered=filtered,
                     )
 
             if provider_name in blocked:
@@ -628,6 +636,13 @@ class LLMClient:
 
             if caching_on:
                 self.cache.put(key, payload)
+            reason, filtered = backend.finish_signal(payload)
+            if filtered:
+                logger.warning(
+                    "Provider-side safety filter fired on %s/%s (%s). This is "
+                    "the provider, not the model - do not score it as a model "
+                    "refusal.", provider_name, candidate, reason,
+                )
             return LLMResponse(
                 content=content,
                 model_used=backend.model_reported(payload, candidate),
@@ -635,6 +650,8 @@ class LLMClient:
                 from_cache=False,
                 raw=payload,
                 provider=provider_name,
+                finish_reason=reason,
+                provider_filtered=filtered,
             )
 
         if failures and budget_failures == len(failures):

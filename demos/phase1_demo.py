@@ -173,6 +173,18 @@ def main() -> int:
         print(f"  Backbone        : {report.backbone_model}")
         print(f"  LLM calls       : {spent}")
         print(f"  Daily budget    : {client.budget_summary()}")
+
+        # A hosted safety layer intercepting a request would be recorded as a
+        # refusal the model never made, which would quietly corrupt HS. Report
+        # the count either way so "0" is an observation, not an assumption.
+        refused = [r for r in report.results if r.outcome.refused]
+        filtered = [r for r in report.results if r.provider_filtered]
+        print(f"  Refusals        : {len(refused)} "
+              f"({len(filtered)} caused by a provider-side filter, "
+              f"{len(refused) - len(filtered)} by the model itself)")
+        if filtered:
+            print("  WARNING         : provider-filtered runs are NOT evidence "
+                  "about the backbone - exclude them from HS.")
         print(f"  Results written : {path}")
 
         if report.failed_count >= 2:

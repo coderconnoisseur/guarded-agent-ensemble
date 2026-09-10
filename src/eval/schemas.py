@@ -222,6 +222,12 @@ class RunResult(BaseModel):
     timestamp: str
 
     suite: str = ""
+    # True when a provider-side safety layer intervened rather than the model
+    # itself declining. A refusal recorded on such a run says something about
+    # the hosted API, not about the backbone, so HS must not absorb it
+    # silently. See Provider.finish_signal.
+    provider_filtered: bool = False
+    finish_reasons: list[str] = Field(default_factory=list)
     # Sandbox contents captured immediately after the run, before the next
     # case resets the world. Recorded so a content-preserved check stays
     # reproducible from the saved result rather than needing the live disk.

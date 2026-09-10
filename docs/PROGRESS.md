@@ -355,6 +355,78 @@ Reproduce with `python demos/show_case.py inj_001`.
 
 ---
 
+## 5b. Are we measuring the model, or the provider's safety layer?
+
+A fair objection to every number in §4: these are hosted APIs, and hosted APIs
+can run their own moderation above the model. If a provider intercepts a
+request, the harness records a refusal the model never produced, `HS` stops
+being a property of the backbone, and Condition B's defenses get measured
+against a baseline that is partly somebody else's filter.
+
+### What the evidence says
+
+Every raw response is kept on disk, so this is checkable rather than arguable.
+Across **137 cached responses** spanning all three backbones:
+
+| Finish reason | Count |
+|---|---|
+| `stop` (OpenAI-compatible) | 100 |
+| `STOP` (Gemini) | 29 |
+| `error` | 3 |
+| `MAX_TOKENS` | 3 |
+| `length` | 2 |
+| **`content_filter` / `SAFETY` / `blockReason` / `safetyRatings`** | **0** |
+
+Zero provider-filter events. All 12 recorded refusals were the model
+declining in its own words, mid-transcript, with reasoning — not an edge
+filter returning a canned block. For the data we have, the confound did not
+fire.
+
+### It is now monitored, not assumed
+
+Checking once by hand is not a control. Each provider adapter now implements
+`finish_signal()`, which reports the finish reason and whether a safety layer
+caused it; it is recorded per step, persisted on every `RunResult`, and the
+demo prints the split:
+
+```
+Refusals        : 5 (0 caused by a provider-side filter, 5 by the model itself)
+```
+
+If a filter ever does fire, the run is flagged and the report can exclude it
+from `HS` rather than quietly absorbing it. The confound becomes a reported
+number instead of a caveat.
+
+### On moving to a local model
+
+Worth doing, but for a narrower reason than "removing the safety layer".
+
+- **A local instruct model has its own alignment training baked into the
+  weights.** Qwen and Llama instruct checkpoints are heavily safety-tuned.
+  Serving them locally removes the *provider's* filter, not the model's
+  refusal behaviour. Only a base (non-instruct) model would lack that, and a
+  base model cannot reliably follow the §5.3 protocol, so the agent loop would
+  stop working before the measurement got cleaner.
+- **What local genuinely buys us** is reproducibility and control: a pinned
+  weight file cannot be silently updated underneath a scored run, there is no
+  quota, no rate limit, and `LAT` becomes measurable without a network in the
+  path. Those are real, and they matter for Phase 6.
+- **What it costs** is that it is a *different backbone*, so its numbers are
+  not comparable with §4's — it would be a fourth column, not a correction to
+  the existing three.
+
+The recommended shape, therefore: keep the pinned hosted backbone for the
+graded A/B run, and treat a local run as a **validation** that the conclusion
+survives a change of backbone. §11 already scopes this as a stretch goal and
+the architecture diagram's Hosted/Local toggle already anticipates it.
+
+Cost to add is small because the provider abstraction already exists: vLLM,
+Ollama and llama.cpp all expose an OpenAI-compatible endpoint, so it is a
+subclass of `OpenAICompatibleProvider` with a configured `base_url` and no
+daily cap — roughly the same size as `GroqProvider`, which is four lines.
+
+---
+
 ## 6. Known defects in our own harness
 
 Reported here rather than quietly fixed, because they change the numbers above.

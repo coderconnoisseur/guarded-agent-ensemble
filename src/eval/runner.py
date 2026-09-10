@@ -199,6 +199,8 @@ def run_case(
         outcome=outcome,
         timestamp=datetime.now(timezone.utc).isoformat(),
         suite=case.suite,
+        provider_filtered=result.provider_filtered,
+        finish_reasons=result.finish_reasons,
         world_state=world,
         check_results=check_results,
         passed=passed,

@@ -202,6 +202,8 @@ class AgentStep:
     model_used: str
     latency_ms: int
     from_cache: bool
+    finish_reason: str = ""
+    provider_filtered: bool = False
     tool_result: ToolResult | None = None
     # Registry metadata, recorded so later phases can see which steps *would*
     # have tripped a defense. Phase 0 attaches no behaviour to it.
@@ -242,6 +244,20 @@ class AgentResult:
             for s in self.steps
             if s.parsed.kind == "action" and s.tool_result is not None
         ]
+
+    @property
+    def provider_filtered(self) -> bool:
+        """Did a provider-side safety layer intervene on any step?
+
+        If it did, a refusal recorded for this run is not evidence about the
+        backbone - it is evidence about the provider's filter. The eval report
+        separates the two rather than folding them together into HS.
+        """
+        return any(step.provider_filtered for step in self.steps)
+
+    @property
+    def finish_reasons(self) -> list[str]:
+        return [step.finish_reason for step in self.steps if step.finish_reason]
 
     @property
     def models_used(self) -> list[str]:
@@ -381,6 +397,8 @@ class ReActAgent:
             model_used=response.model_used,
             latency_ms=response.latency_ms,
             from_cache=response.from_cache,
+            finish_reason=response.finish_reason,
+            provider_filtered=response.provider_filtered,
         )
         result.steps.append(step)
         return step

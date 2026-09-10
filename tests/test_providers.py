@@ -462,3 +462,86 @@ class TestQuotaSemantics:
         )
         client.budget_for("openrouter", "a").charge()
         assert client.budget_for("openrouter", "b").used_today == 1
+
+
+class TestProviderFilterDetection:
+    """Separating a provider's safety layer from the model's own refusal.
+
+    Both look like "the agent didn't do it", but only one is evidence about
+    the backbone. Folding them together would let a hosted filter silently
+    improve HS - the metric the whole Harm Gate comparison rests on.
+    """
+
+    def test_normal_stop_is_not_a_filter_event(self):
+        payload = {"choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}]}
+        reason, filtered = GroqProvider().finish_signal(payload)
+        assert reason == "stop"
+        assert filtered is False
+
+    def test_openai_content_filter_is_detected(self):
+        payload = {
+            "choices": [{"message": {"content": ""}, "finish_reason": "content_filter"}]
+        }
+        reason, filtered = GroqProvider().finish_signal(payload)
+        assert reason == "content_filter"
+        assert filtered is True
+
+    def test_openrouter_native_finish_reason_is_read(self):
+        payload = {
+            "choices": [
+                {"message": {"content": ""}, "native_finish_reason": "SAFETY"}
+            ]
+        }
+        _, filtered = OpenRouterProvider().finish_signal(payload)
+        assert filtered is True
+
+    def test_gemini_safety_finish_is_detected(self):
+        payload = {"candidates": [{"content": {"parts": []}, "finishReason": "SAFETY"}]}
+        reason, filtered = GeminiProvider().finish_signal(payload)
+        assert reason == "SAFETY"
+        assert filtered is True
+
+    def test_gemini_blocked_prompt_is_detected(self):
+        """A blocked prompt never reaches the model at all."""
+        payload = {"promptFeedback": {"blockReason": "SAFETY"}, "candidates": []}
+        reason, filtered = GeminiProvider().finish_signal(payload)
+        assert filtered is True
+        assert "PROMPT_BLOCKED" in reason
+
+    def test_gemini_max_tokens_is_not_a_filter_event(self):
+        payload = {
+            "candidates": [{"content": {"parts": [{"text": "x"}]},
+                            "finishReason": "MAX_TOKENS"}]
+        }
+        _, filtered = GeminiProvider().finish_signal(payload)
+        assert filtered is False
+
+    def test_response_carries_the_signal_through(self, isolated):
+        payload = {
+            "choices": [{"message": {"content": "no"}, "finish_reason": "content_filter"}]
+        }
+        client = LLMClient(model_chain=[("groq", "m")], api_key="k")
+        client._client = httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, json=payload))
+        )
+        response = client.chat([{"role": "user", "content": "x"}])
+        assert response.provider_filtered is True
+        assert response.finish_reason == "content_filter"
+
+    def test_agent_result_surfaces_a_filtered_step(self, isolated):
+        from src.agent.loop import ReActAgent
+        from src.tools.registry import ToolRegistry
+
+        payload = {
+            "choices": [
+                {"message": {"content": "Final: I cannot help"},
+                 "finish_reason": "content_filter"}
+            ]
+        }
+        client = LLMClient(model_chain=[("groq", "m")], api_key="k")
+        client._client = httpx.Client(
+            transport=httpx.MockTransport(lambda r: httpx.Response(200, json=payload))
+        )
+        result = ReActAgent(client, ToolRegistry()).run("do a thing")
+        assert result.provider_filtered is True
+        assert "content_filter" in result.finish_reasons
