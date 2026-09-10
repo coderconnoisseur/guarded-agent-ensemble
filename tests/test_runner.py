@@ -215,8 +215,25 @@ class TestPreflightBudget:
 class TestSuiteLoading:
     def test_all_real_cases_load_and_validate(self):
         cases = load_suites(settings.TESTSUITES_DIR)
-        assert len(cases) == 12
+        assert len(cases) >= 12, "10-15 cases minimum per CLAUDE.md 10"
         assert {c.suite for c in cases} == {"direct_harm", "injection", "misalignment"}
+        assert len({c.id for c in cases}) == len(cases), "duplicate case ids"
+
+    def test_both_attack_arms_are_present(self):
+        """Blunt and hardened arms measure a sophistication gradient.
+
+        Losing either one silently would turn a comparison into a single
+        number without anything visibly breaking.
+        """
+        cases = load_suites(settings.TESTSUITES_DIR)
+        categories = {c.category for c in cases}
+        assert any("delegated" in c for c in categories), "no delegated injections"
+        assert any("jailbreak" in c for c in categories), "no jailbreak harm cases"
+
+    def test_every_suite_has_a_benign_counterpart(self):
+        """AgentHarm pairs harmful tasks with benign ones so over-refusal costs."""
+        cases = load_suites(settings.TESTSUITES_DIR, ["direct_harm"])
+        assert any(c.id.startswith("benign_") for c in cases)
 
     def test_diversity_suite_is_empty_by_design(self):
         """Empty is a documented scoping decision (9 / 11), not a load failure."""

@@ -133,10 +133,22 @@ GEMINI_MODEL_CHAIN = [
     "gemini-2.5-flash-lite",
 ]
 
-# Reported limits are ~10-15 requests/minute and ~500-1500/day. Both are taken
-# at the conservative end: being throttled costs a retry, and being wrong
-# about the daily cap costs a half-finished eval run.
-GEMINI_DAILY_REQUEST_CAP = int(_setting("GEMINI_DAILY_REQUEST_CAP", "500") or 500)
+# MEASURED, not estimated. A run on 2026-09-10 hit HTTP 429 and the API named
+# its own limit in the error body:
+#
+#   quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier
+#   model:   gemini-2.5-flash
+#   value:   20
+#
+# So the free tier is 20 requests per day PER MODEL - not the several hundred
+# that secondary sources report. Two consequences:
+#
+#   - a cap of 500 here is not a guard at all; the local counter passed 73
+#     while the real quota had already been refusing requests for a while.
+#   - because the quota is per model, each entry in GEMINI_MODEL_CHAIN carries
+#     its own separate 20, which is why budgets are scoped per model for this
+#     provider (see PROVIDER_LIMITS below).
+GEMINI_DAILY_REQUEST_CAP = int(_setting("GEMINI_DAILY_REQUEST_CAP", "20") or 20)
 GEMINI_RATE_LIMIT_PER_MINUTE = 10
 
 
@@ -154,16 +166,32 @@ PROVIDER_CHAIN: list[tuple[str, str]] = [
 ]
 
 # Per-provider limits, looked up by provider name.
-PROVIDER_LIMITS: dict[str, dict[str, int]] = {
+#
+# `budget_scope` records what the daily cap actually applies to, because the
+# two backends differ and getting it wrong makes the counter meaningless:
+#   - OpenRouter bills 50/day against the whole account, shared across models.
+#   - Gemini allows 20/day per model, so each model has independent headroom.
+PROVIDER_LIMITS: dict[str, dict] = {
     "openrouter": {
         "daily_cap": DAILY_REQUEST_CAP,
         "rate_limit_per_minute": RATE_LIMIT_PER_MINUTE,
+        "budget_scope": "account",
     },
     "gemini": {
         "daily_cap": GEMINI_DAILY_REQUEST_CAP,
         "rate_limit_per_minute": GEMINI_RATE_LIMIT_PER_MINUTE,
+        "budget_scope": "model",
     },
 }
+
+
+def budget_key(provider: str, model: str) -> str:
+    """Which counter a call is charged to.
+
+    Per model where the provider's quota is per model, per account otherwise.
+    """
+    scope = PROVIDER_LIMITS.get(provider, {}).get("budget_scope", "account")
+    return f"{provider}:{model}" if scope == "model" else provider
 
 
 def api_key_for(provider: str) -> str:

@@ -319,7 +319,7 @@ class LLMClient:
 
         self.limiters: dict[str, RateLimiter] = {}
         self.budgets: dict[str, BudgetTracker] = {}
-        for provider_name in {p for p, _ in self.chain}:
+        for provider_name, model_name in self.chain:
             limits = settings.PROVIDER_LIMITS.get(
                 provider_name,
                 {
@@ -327,14 +327,21 @@ class LLMClient:
                     "rate_limit_per_minute": settings.RATE_LIMIT_PER_MINUTE,
                 },
             )
-            self.limiters[provider_name] = RateLimiter(
-                limits["rate_limit_per_minute"]
+            self.limiters.setdefault(
+                provider_name, RateLimiter(limits["rate_limit_per_minute"])
             )
-            self.budgets[provider_name] = BudgetTracker(
-                settings.LLM_BUDGET_FILE,
-                daily_cap if daily_cap is not None else limits["daily_cap"],
-                provider=provider_name,
-                warn_threshold=settings.BUDGET_WARN_THRESHOLD,
+            # Keyed by whatever the provider's quota actually applies to:
+            # OpenRouter's 50/day covers the account, Gemini's 20/day covers
+            # one model, so they cannot share a counter.
+            key = settings.budget_key(provider_name, model_name)
+            self.budgets.setdefault(
+                key,
+                BudgetTracker(
+                    settings.LLM_BUDGET_FILE,
+                    daily_cap if daily_cap is not None else limits["daily_cap"],
+                    provider=key,
+                    warn_threshold=settings.BUDGET_WARN_THRESHOLD,
+                ),
             )
 
         # Index into the chain. Advances permanently once an entry is judged
@@ -380,10 +387,14 @@ class LLMClient:
     def current_provider(self) -> str:
         return self.chain[self._index][0]
 
+    def budget_for(self, provider: str, model: str) -> BudgetTracker:
+        """The counter a (provider, model) pair is charged against."""
+        return self.budgets[settings.budget_key(provider, model)]
+
     @property
     def budget(self) -> BudgetTracker:
-        """The current provider's budget, for callers that want just one."""
-        return self.budgets[self.current_provider]
+        """The current chain entry's budget, for callers that want just one."""
+        return self.budget_for(*self.current)
 
     def budget_summary(self) -> str:
         """One line per backend, for demo output."""
@@ -405,11 +416,12 @@ class LLMClient:
         name = provider.name
         url = provider.base_url + provider.endpoint(model)
         headers = provider.headers(self.api_key(name))
+        budget = self.budget_for(name, model)
         last_error = ""
 
         for attempt in range(settings.MAX_RETRIES):
             self.limiters[name].acquire()
-            self.budgets[name].check()
+            budget.check()
             try:
                 response = self._client.post(url, headers=headers, json=body)
             except httpx.RequestError as exc:  # network-level, worth retrying
@@ -422,7 +434,7 @@ class LLMClient:
             # consulted). A 401/403 never reached an account and a 5xx was
             # never served - counting either spends budget on nothing.
             if response.status_code in (200, 429):
-                self.budgets[name].charge()
+                budget.charge()
 
             if response.status_code == 200:
                 payload = response.json()
@@ -432,6 +444,12 @@ class LLMClient:
                 return payload
 
             if response.status_code == 429:
+                if self._is_daily_quota_error(response):
+                    raise BudgetExceededError(
+                        f"{name}/{model} has exhausted its daily quota "
+                        f"(the API reported a per-day limit). Retrying cannot "
+                        f"help until the quota resets."
+                    )
                 last_error = f"429 rate limited: {response.text[:200]}"
                 logger.warning("Rate limited by %s (attempt %d)", name, attempt + 1)
                 self._sleep_backoff(attempt, response.headers.get("Retry-After"))
@@ -457,6 +475,25 @@ class LLMClient:
                 f"{last_error}"
             )
         raise LLMError(f"Gave up after {settings.MAX_RETRIES} attempts: {last_error}")
+
+    @staticmethod
+    def _is_daily_quota_error(response: httpx.Response) -> bool:
+        """Does this 429 mean "done for today" rather than "slow down"?
+
+        Backing off against a per-minute limit is correct; backing off against
+        a per-day quota just burns the retry schedule and wall-clock time for
+        a request that cannot succeed until tomorrow. Gemini names the limit
+        it hit in the error body, so the two are distinguishable.
+        """
+        try:
+            details = (response.json().get("error") or {}).get("details") or []
+        except (ValueError, AttributeError):
+            return False
+        for detail in details:
+            for violation in detail.get("violations", []) or []:
+                if "PerDay" in str(violation.get("quotaId", "")):
+                    return True
+        return False
 
     @staticmethod
     def _sleep_backoff(attempt: int, retry_after: str | None) -> None:
@@ -515,6 +552,10 @@ class LLMClient:
         candidates = self._candidates(model, provider)
 
         failures: list[str] = []
+        # Tracked as a count rather than by matching error text: deciding which
+        # exception to raise by grepping a message breaks the moment the
+        # wording changes.
+        budget_failures = 0
         blocked: set[str] = set()  # providers out of budget or throttled
 
         for provider_name, candidate in candidates:
@@ -550,6 +591,8 @@ class LLMClient:
             try:
                 payload = self._post_with_retries(backend, candidate, body)
             except (BudgetExceededError, RateLimitExhaustedError) as exc:
+                if isinstance(exc, BudgetExceededError):
+                    budget_failures += 1
                 # Provider-wide, not model-specific: skip this whole backend
                 # and let the chain carry on with the next one. This is what
                 # lets a run continue on Gemini when OpenRouter is spent.
@@ -590,7 +633,7 @@ class LLMClient:
                 provider=provider_name,
             )
 
-        if failures and all("cap reached" in f for f in failures):
+        if failures and budget_failures == len(failures):
             raise BudgetExceededError(
                 "Every backend has spent its daily budget:\n  " + "\n  ".join(failures)
             )

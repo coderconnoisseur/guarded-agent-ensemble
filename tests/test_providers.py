@@ -268,7 +268,8 @@ class TestCrossProviderFallback:
 
         client.chat([{"role": "user", "content": "hi"}])
         assert client.budgets["openrouter"].used_today == 1
-        assert client.budgets["gemini"].used_today == 1
+        # Gemini's quota is per model, so its counter is scoped that way.
+        assert client.budget_for("gemini", "g").used_today == 1
 
     def test_a_provider_without_a_key_is_skipped_not_fatal(self, isolated, monkeypatch):
         monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "")
@@ -358,3 +359,75 @@ class TestCacheCompatibility:
         assert second.from_cache is True
         assert second.content == first.content
         assert second.provider == "gemini"
+
+
+class TestQuotaSemantics:
+    """A per-day 429 is not a per-minute 429 (measured against the real API)."""
+
+    def test_daily_quota_429_is_not_retried(self, isolated, monkeypatch):
+        """Backing off five times against a daily quota wastes the schedule."""
+        slept: list[float] = []
+        monkeypatch.setattr("src.llm.client.time.sleep", slept.append)
+        attempts = {"n": 0}
+
+        def handler(request):
+            attempts["n"] += 1
+            return httpx.Response(429, json={
+                "error": {
+                    "code": 429,
+                    "message": "You exceeded your current quota",
+                    "details": [{
+                        "@type": "type.googleapis.com/google.rpc.QuotaFailure",
+                        "violations": [{
+                            "quotaId": (
+                                "GenerateRequestsPerDayPerProjectPerModel-FreeTier"
+                            ),
+                            "quotaValue": "20",
+                        }],
+                    }],
+                }
+            })
+
+        client = LLMClient(model_chain=[("gemini", "gemini-2.5-flash")], api_key="k")
+        client._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+        with pytest.raises(BudgetExceededError):
+            client.chat([{"role": "user", "content": "hi"}])
+
+        assert attempts["n"] == 1, "a per-day quota must not be retried"
+        assert not slept, "no backoff for a limit that resets tomorrow"
+
+    def test_per_minute_429_is_still_retried(self, isolated, monkeypatch):
+        monkeypatch.setattr("src.llm.client.time.sleep", lambda _s: None)
+        attempts = {"n": 0}
+
+        def handler(request):
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                return httpx.Response(429, text="slow down")
+            return httpx.Response(200, json=gemini_reply("recovered"))
+
+        client = LLMClient(model_chain=[("gemini", "g")], api_key="k")
+        client._client = httpx.Client(transport=httpx.MockTransport(handler))
+
+        assert client.chat([{"role": "user", "content": "x"}]).content == "recovered"
+        assert attempts["n"] == 3
+
+    def test_gemini_models_have_independent_counters(self, isolated):
+        """The quota is per model, so one model's spend is not the other's."""
+        client = LLMClient(
+            model_chain=[("gemini", "gemini-2.5-flash"),
+                         ("gemini", "gemini-2.5-flash-lite")],
+            api_key="k",
+        )
+        client.budget_for("gemini", "gemini-2.5-flash").charge()
+        assert client.budget_for("gemini", "gemini-2.5-flash").used_today == 1
+        assert client.budget_for("gemini", "gemini-2.5-flash-lite").used_today == 0
+
+    def test_openrouter_models_share_one_account_counter(self, isolated):
+        """OpenRouter's 50/day covers the account, not each model."""
+        client = LLMClient(
+            model_chain=[("openrouter", "a"), ("openrouter", "b")], api_key="k"
+        )
+        client.budget_for("openrouter", "a").charge()
+        assert client.budget_for("openrouter", "b").used_today == 1
