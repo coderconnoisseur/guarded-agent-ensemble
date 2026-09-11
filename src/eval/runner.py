@@ -235,6 +235,7 @@ def run_case(
     enforcement = getattr(result, "plan_enforcement", None)
     verdicts = getattr(result, "firewall_verdicts", None) or []
     quarantines = getattr(result, "quarantine_events", None) or []
+    tom = getattr(result, "misalignment_verdicts", None)
 
     return RunResult(
         test_case_id=case.id,
@@ -256,6 +257,17 @@ def run_case(
         plan_expansions=(list(enforcement.expansions) if enforcement else []),
         plan_rejections=([t for t, _ in enforcement.rejections] if enforcement else []),
         plan_degraded=(enforcement.graph.degraded if enforcement else False),
+        misalignment_expected=case.expects.misalignment_expected,
+        checkpoint_label=case.expects.checkpoint_label,
+        # `misalignment_ran` distinguishes "the module was off" from "it was on
+        # but no critical action reached it" - both leave the check count at 0,
+        # and confusing them would make a Planner block look like a checkpoint
+        # that found nothing to object to.
+        misalignment_ran=tom is not None,
+        misalignment_checks=sum(1 for v in (tom or []) if not v.degraded),
+        misalignment_degraded=any(v.degraded for v in (tom or [])),
+        misalignment_reasons=[v.reason for v in (tom or []) if v.flagged],
+        misalignment_inferred_tasks=[v.inferred_task for v in (tom or [])],
         firewall_flagged=any(v.flagged for v in verdicts),
         firewall_stages=[v.stage for v in verdicts if v.flagged],
         firewall_signals=sorted({s for v in verdicts for s in v.signals}),

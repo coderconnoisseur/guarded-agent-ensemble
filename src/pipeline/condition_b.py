@@ -35,6 +35,7 @@ from src.defense.firewall import (
     scan_tool_descriptions,
 )
 from src.defense.harm_gate import HarmGate, HarmVerdict
+from src.defense.misalignment import MisalignmentCheckpoint, MisalignmentRegistry
 from src.defense.quarantine import Quarantine
 from src.defense.planner import (
     PlanEnforcement,
@@ -48,9 +49,9 @@ logger = logging.getLogger(__name__)
 
 CONDITION = "B"
 
-# Implemented today. The rest of ALL_MODULES arrives in Phases 3-5.
+# All four architecture.md defense nodes are implemented as of Phase 5.
 IMPLEMENTED_MODULES: frozenset[str] = frozenset(
-    {"harm_gate", "planner", "firewall", "quarantine"}
+    {"harm_gate", "planner", "firewall", "quarantine", "misalignment"}
 )
 ALL_MODULES: frozenset[str] = frozenset(
     {"harm_gate", "planner", "firewall", "quarantine", "misalignment"}
@@ -105,6 +106,18 @@ class ConditionB:
         self.planner = (
             Planner(client=client, model=self.model)
             if "planner" in self.enabled_modules
+            else None
+        )
+        self.checkpoint = (
+            MisalignmentCheckpoint(client=client, model=self.model)
+            if "misalignment" in self.enabled_modules
+            else None
+        )
+        # Built once and reset per run: it accumulates the action/observation
+        # trajectory InferAct's Task Inference Unit reasons over.
+        self.misalignment_registry = (
+            MisalignmentRegistry(self.registry, self.checkpoint)
+            if self.checkpoint is not None
             else None
         )
         self.firewall = (
@@ -184,6 +197,17 @@ class ConditionB:
         # content is in context is not a constraint on anything.
         enforcement: PlanEnforcement | None = None
         registry: Any = self.registry
+
+        # InferAct: the ToM check sits innermost, so the plan gate above it
+        # runs first. architecture.md Flow 4 orders the pipeline
+        # `Planner -> Backbone -> Misalignment Checkpoint -> Tool`, and
+        # dispatch enters at the outermost wrapper - so "innermost" here is
+        # what puts the checkpoint *after* the plan gate at run time. It also
+        # means a call the plan already rejects never spends two judge calls.
+        if self.misalignment_registry is not None:
+            self.misalignment_registry.reset(task)
+            registry = self.misalignment_registry
+
         if self.planner is not None:
             graph = self.planner.build_plan(task, self.registry)
             enforcement = PlanEnforcement(
@@ -217,4 +241,8 @@ class ConditionB:
             result.firewall_verdicts = list(self.firewall.verdicts)
         if self.quarantine is not None:
             result.quarantine_events = list(self.quarantine.events)
+        if self.misalignment_registry is not None:
+            verdicts = list(self.misalignment_registry.verdicts)
+            result.num_llm_calls += sum(v.llm_calls for v in verdicts)
+            result.misalignment_verdicts = verdicts
         return result

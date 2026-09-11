@@ -238,6 +238,7 @@ class AgentResult:
     plan_enforcement: Any = None
     firewall_verdicts: Any = None
     quarantine_events: Any = None
+    misalignment_verdicts: Any = None
 
     @property
     def tool_calls(self) -> list[tuple[str, dict[str, Any]]]:

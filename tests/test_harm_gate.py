@@ -275,9 +275,25 @@ class TestConditionB:
         assert pipeline.harm_gate is None
         assert pipeline.enabled_modules == frozenset()
 
-    def test_unimplemented_module_raises_rather_than_silently_passing(self):
+    def test_unimplemented_module_raises_rather_than_silently_passing(self, monkeypatch):
+        """The guard that keeps a config typo from disabling a defense quietly.
+
+        Every module in ALL_MODULES is built as of Phase 5, so there is no
+        real unbuilt name left to ask for. The guard still has to work for the
+        next module added, and a run that silently proceeds without a defense
+        it was told to use would post a suspiciously good number rather than
+        an error - so the condition is exercised against a shrunk set.
+        """
+        monkeypatch.setattr(
+            "src.pipeline.condition_b.IMPLEMENTED_MODULES",
+            IMPLEMENTED_MODULES - {"misalignment"},
+        )
         with pytest.raises(NotImplementedError, match="misalignment"):
             ConditionB(FakeClient(), enabled_modules={"misalignment"})
+
+    def test_every_declared_module_is_implemented(self):
+        """Phase 5 completes the diagram's four defense nodes."""
+        assert IMPLEMENTED_MODULES == ALL_MODULES
 
     def test_unknown_module_raises(self):
         with pytest.raises(ValueError, match="Unknown"):

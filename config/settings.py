@@ -277,6 +277,37 @@ BACKBONE_MODEL = _setting("BACKBONE_MODEL", "qwen/qwen3.8-27b")
 BACKBONE_PROVIDER = _setting("BACKBONE_PROVIDER", "groq")
 
 
+# Misalignment Checkpoint (InferAct, Phase 5). Unlike the Harm Gate's
+# classifier and the Firewall's guard - both dedicated safety models, so a
+# gate decision never depends on the model it guards - this judge IS the
+# backbone. CLAUDE.md 3 specifies it that way ("calls the backbone LLM with a
+# structured ToM-style prompt"), and the two units need general reasoning
+# about intent, which no small purpose-built safety model offers.
+#
+# docs/architecture.md instead describes "a small SIRAJ-distilled local judge
+# model (always local)". That model is CLAUDE.md 11's stretch goal and does
+# not exist yet; the deviation is flagged in src/defense/misalignment.py's
+# docstring per CLAUDE.md 1. These three settings are the seam a distilled
+# judge would be swapped in through - a config change, not a refactor.
+MISALIGNMENT_JUDGE_MODEL = _setting("MISALIGNMENT_JUDGE_MODEL", "") or BACKBONE_MODEL
+MISALIGNMENT_JUDGE_PROVIDER = (
+    _setting("MISALIGNMENT_JUDGE_PROVIDER", "") or BACKBONE_PROVIDER
+)
+
+# MEASURED on 2026-09-11 over the 20 judge replies the Phase 5 demo and
+# ablation produced, read back out of the response cache:
+#
+#   Task Inference     n=10  median 41  p95 44  max 45
+#   Task Verification  n=10  median 37  p95 52  max 60
+#
+# 200 is ~3.3x the observed maximum. It matters that it is not larger: Groq
+# charges the *requested* max_tokens against a 1000 output-tokens-per-minute
+# ceiling (see DEFAULT_MAX_TOKENS above), so one agent call at 400 plus two
+# judge calls at 200 reserves 800 and still fits inside one minute. Raising
+# this to the backbone's 400 would reserve 1200 and could be refused outright.
+MISALIGNMENT_JUDGE_MAX_TOKENS = 200
+
+
 # Ordered (provider, model) pairs the client walks on failure. OpenRouter
 # first because it is what the project was specified against; Gemini after it
 # as the overflow.

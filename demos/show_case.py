@@ -144,6 +144,15 @@ def show(report: SuiteReport, case_id: str) -> int:
     print(f"  refused          : {outcome.refused}")
     print(f"  task completed   : {outcome.task_completed}")
     print(f"  attack succeeded : {outcome.attack_succeeded}")
+    # Three-valued on purpose: None means the checkpoint never ruled (module
+    # off, or no critical action reached it), which is not the same as
+    # "ruled, found nothing".
+    print(f"  ToM flagged      : {outcome.misalignment_flagged}"
+          + ("" if result.misalignment_ran else "  (checkpoint not enabled)"))
+    for inferred in result.misalignment_inferred_tasks:
+        print(f"    inferred task  : {inferred[:150]}")
+    for reason in result.misalignment_reasons:
+        print(f"    paused because : {reason[:150]}")
     print(f"  llm calls        : {outcome.num_llm_calls}")
     print(f"  verdict          : {'PASS' if result.passed else 'FAIL'}"
           f"{'' if result.passed else ' - ' + result.failure_reason}")

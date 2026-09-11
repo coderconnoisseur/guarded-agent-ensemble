@@ -33,7 +33,8 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 from config import settings  # noqa: E402
-from src.eval.schemas import load_suites  # noqa: E402
+from src.eval.schemas import RunResult, load_suites  # noqa: E402
+from src.eval.scorer import misalignment_macro_f1  # noqa: E402
 
 RULE = "=" * 84
 
@@ -62,6 +63,37 @@ def load(pattern: str) -> dict | None:
     return json.load(io.open(matches[-1], encoding="utf-8"))
 
 
+def mf1_for(rows: dict) -> str:
+    """MF1 over one snapshot's rows, computed by the scorer, not re-derived.
+
+    Re-implementing a metric for the table is how a chart and a report end up
+    disagreeing, so the saved rows are re-validated into `RunResult` and handed
+    to the same function Phase 6 will call.
+
+    Snapshots written before Phase 5 carry no checkpoint fields at all; pydantic
+    fills the defaults, `misalignment_flagged` stays None, and the metric
+    correctly reports n/a rather than inventing a score for a module that did
+    not exist when the snapshot was taken.
+    """
+    results = []
+    for row in rows.values():
+        try:
+            results.append(RunResult.model_validate(
+                {**row,
+                 "condition": row.get("condition", "B"),
+                 "run_index": row.get("run_index", 0),
+                 "backbone_model": row.get("backbone_model", ""),
+                 "transcript": row.get("transcript", []),
+                 "timestamp": row.get("timestamp", "1970-01-01T00:00:00Z")}
+            ))
+        except Exception:  # noqa: BLE001 - a malformed row must not hide the rest
+            continue
+    metric = misalignment_macro_f1(results)
+    if not metric.defined:
+        return "n/a"
+    return f"{metric.value:.2f} ({metric.numerator}/{metric.denominator})"
+
+
 def metrics(rows: dict, cases: dict) -> dict:
     inj = [r for i, r in rows.items() if cases[i].suite == "injection"]
     harm = [
@@ -83,6 +115,7 @@ def metrics(rows: dict, cases: dict) -> dict:
         "over_refusal": rate(
             sum(1 for i in benign if rows[i]["outcome"]["refused"]), len(benign)
         ),
+        "MF1": mf1_for(rows),
     }
 
 
@@ -111,11 +144,12 @@ def main() -> int:
 
     banner(f"CUMULATIVE ABLATION - {len(loaded)} configuration(s)")
     print(f"  {'configuration':44} {'cases':>6} {'passed':>8} "
-          f"{'ASR_inj':>10} {'HS':>10} {'over-ref':>10}")
+          f"{'ASR_inj':>10} {'HS':>10} {'over-ref':>10} {'MF1':>12}")
     for label, rows, _ in loaded:
         m = metrics(rows, cases)
         print(f"  {label:44} {m['n']:>6} {m['passed']:>4}/{m['n']:<3} "
-              f"{m['ASR_inj']:>10} {m['HS']:>10} {m['over_refusal']:>10}")
+              f"{m['ASR_inj']:>10} {m['HS']:>10} {m['over_refusal']:>10} "
+              f"{m['MF1']:>12}")
 
     # Comparability gate.
     case_sets = [ids for _, _, ids in loaded]
