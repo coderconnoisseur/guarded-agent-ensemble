@@ -29,7 +29,13 @@ from typing import Any
 
 from config import settings
 from src.agent.loop import AgentResult, ReActAgent
+from src.defense.firewall import (
+    FirewallRegistry,
+    ResponseFirewall,
+    scan_tool_descriptions,
+)
 from src.defense.harm_gate import HarmGate, HarmVerdict
+from src.defense.quarantine import Quarantine
 from src.defense.planner import (
     PlanEnforcement,
     PlanEnforcingRegistry,
@@ -43,7 +49,9 @@ logger = logging.getLogger(__name__)
 CONDITION = "B"
 
 # Implemented today. The rest of ALL_MODULES arrives in Phases 3-5.
-IMPLEMENTED_MODULES: frozenset[str] = frozenset({"harm_gate", "planner"})
+IMPLEMENTED_MODULES: frozenset[str] = frozenset(
+    {"harm_gate", "planner", "firewall", "quarantine"}
+)
 ALL_MODULES: frozenset[str] = frozenset(
     {"harm_gate", "planner", "firewall", "quarantine", "misalignment"}
 )
@@ -62,6 +70,7 @@ class ConditionB:
         model: str | None = None,
         use_chain: bool = False,
         enable_harm_classifier: bool = True,
+        enable_guard_model: bool = True,
         **agent_kwargs: Any,
     ) -> None:
         requested = frozenset(
@@ -98,6 +107,31 @@ class ConditionB:
             if "planner" in self.enabled_modules
             else None
         )
+        self.firewall = (
+            ResponseFirewall(client=client, enable_guard_model=enable_guard_model)
+            if "firewall" in self.enabled_modules
+            else None
+        )
+        # Quarantine is the firewall's remedy; without the firewall there is
+        # nothing to remediate, so asking for it alone is a configuration
+        # error rather than a silently-inert module.
+        if "quarantine" in self.enabled_modules and self.firewall is None:
+            raise ValueError(
+                "quarantine requires firewall: it remediates what the firewall "
+                "flags, and alone it would never run."
+            )
+        self.quarantine = (
+            Quarantine(self.firewall)
+            if "quarantine" in self.enabled_modules and self.firewall is not None
+            else None
+        )
+
+        if self.firewall is not None:
+            # ShieldMCP Stage 1, once at wiring time: the registry itself can
+            # be the attack surface.
+            self.registry_integrity = scan_tool_descriptions(self.registry)
+        else:
+            self.registry_integrity = []
 
     # -- module: Harm Gate -------------------------------------------------
 
@@ -149,13 +183,25 @@ class ConditionB:
         # first is the load-bearing part - a plan written after untrusted
         # content is in context is not a constraint on anything.
         enforcement: PlanEnforcement | None = None
+        registry: Any = self.registry
         if self.planner is not None:
             graph = self.planner.build_plan(task, self.registry)
             enforcement = PlanEnforcement(
                 graph=graph, llm_calls=self.planner.llm_calls
             )
-            self.agent.registry = PlanEnforcingRegistry(self.registry, enforcement)
+            registry = PlanEnforcingRegistry(registry, enforcement)
 
+        # Layered deliberately: the Planner decides whether a call may happen
+        # (pre-call), the firewall decides whether its response may be
+        # believed (post-response). Separate wrappers keep either runnable
+        # alone for 9.1's single-module isolation.
+        if self.firewall is not None:
+            self.firewall.verdicts.clear()
+            if self.quarantine is not None:
+                self.quarantine.events.clear()
+            registry = FirewallRegistry(registry, self.firewall, self.quarantine)
+
+        self.agent.registry = registry
         result = self.agent.run(task)
 
         # Charge every defense's own calls to the run, so LAT and the call
@@ -166,4 +212,9 @@ class ConditionB:
         if enforcement is not None:
             result.num_llm_calls += enforcement.llm_calls
             result.plan_enforcement = enforcement
+        if self.firewall is not None:
+            result.num_llm_calls += sum(v.llm_calls for v in self.firewall.verdicts)
+            result.firewall_verdicts = list(self.firewall.verdicts)
+        if self.quarantine is not None:
+            result.quarantine_events = list(self.quarantine.events)
         return result

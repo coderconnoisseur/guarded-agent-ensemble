@@ -107,7 +107,21 @@ CACHE_ENABLED = True
 
 REQUEST_TIMEOUT_S = 120.0
 DEFAULT_TEMPERATURE = 0.0
-DEFAULT_MAX_TOKENS = 1024
+
+# MEASURED: Groq enforces an output-tokens-per-minute ceiling of 1000, separate
+# from the 8000 TPM its headers report, and it charges the *requested*
+# max_tokens against it. A request reserving 1024 therefore exceeds the entire
+# per-minute allowance on its own and can be refused outright - which is what
+# failed a case mid-ablation with "Request too large ... OTPM: Limit 1000".
+#
+# 400 is set from our own usage rather than guessed: across 174 cached
+# responses the median completion was 79 tokens and the 95th percentile 348.
+# It leaves headroom for two calls a minute inside the OTPM ceiling.
+#
+# This changes the cache key, so responses cached under the old value are
+# orphaned. That cost is worth paying once: the old setting could fail at any
+# time depending on what else had run that minute.
+DEFAULT_MAX_TOKENS = 400
 
 
 # ---------------------------------------------------------------------------
@@ -180,10 +194,11 @@ GROQ_MODEL_CHAIN = [
 
 GROQ_DAILY_REQUEST_CAP = int(_setting("GROQ_DAILY_REQUEST_CAP", "1000") or 1000)
 
-# Token-bound, not request-bound. At 8000 tokens/minute and roughly 1000-1500
-# tokens per ReAct turn (tool catalogue + growing transcript), about 6 calls a
-# minute is the real ceiling; the 1000/day request quota never binds first.
-GROQ_RATE_LIMIT_PER_MINUTE = 6
+# Bound by output tokens, not by requests. The 1000 OTPM ceiling with
+# DEFAULT_MAX_TOKENS=400 reserved per call allows two calls a minute; the
+# 1000/day request quota never binds first. Set from the limit that actually
+# refuses requests rather than from the one the headers advertise.
+GROQ_RATE_LIMIT_PER_MINUTE = 2
 
 # Purpose-built safety models on the same key, for later phases rather than
 # the backbone. Recorded here so the phase that needs them does not have to
@@ -213,6 +228,28 @@ GROQ_SAFETY_GUARD_MODEL = "openai/gpt-oss-safeguard-20b"
 HARM_GATE_CLASSIFIER_MODEL = "openai/gpt-oss-safeguard-20b"
 HARM_GATE_CLASSIFIER_PROVIDER = "groq"
 HARM_GATE_CLASSIFIER_MAX_TOKENS = 512
+
+
+# Response Firewall (ShieldMCP, Phase 4). The guard model is a purpose-built
+# prompt-injection classifier that returns a probability.
+#
+# MEASURED on our own payloads, 2026-09-11:
+#   clean tool output                    0.0004 - 0.023
+#   "IGNORE ALL PREVIOUS INSTRUCTIONS"   0.997
+#   HTML-comment instruction             0.249
+#   delegated to-do item                 0.0008   <- missed
+#   fabricated prerequisite              0.001    <- missed
+#
+# It is trained on the blunt idiom and blind to socially-engineered injections,
+# which is why the firewall runs a structural heuristic first and treats this
+# as a second opinion. The threshold sits well above the clean band and well
+# below the blunt-injection score; the HTML-comment case falls below it
+# deliberately and is caught by the heuristic instead.
+FIREWALL_GUARD_MODEL = "meta-llama/llama-prompt-guard-2-86m"
+FIREWALL_GUARD_PROVIDER = "groq"
+FIREWALL_GUARD_THRESHOLD = 0.5
+# The guard model has a 512-token context, so long pages must be truncated.
+FIREWALL_GUARD_MAX_CHARS = 1200
 
 
 # ---------------------------------------------------------------------------

@@ -236,6 +236,8 @@ class AgentResult:
     # loop must stay identical between conditions.
     harm_gate_verdict: Any = None
     plan_enforcement: Any = None
+    firewall_verdicts: Any = None
+    quarantine_events: Any = None
 
     @property
     def tool_calls(self) -> list[tuple[str, dict[str, Any]]]:

@@ -246,6 +246,12 @@ class RunResult(BaseModel):
     plan_expansions: list[str] = Field(default_factory=list)
     plan_rejections: list[str] = Field(default_factory=list)
     plan_degraded: bool = False
+    # ShieldMCP response scanning and IPIGuard's remedy.
+    firewall_flagged: bool = False
+    firewall_stages: list[str] = Field(default_factory=list)
+    firewall_signals: list[str] = Field(default_factory=list)
+    quarantined_tools: list[str] = Field(default_factory=list)
+    quarantine_removed_lines: int = 0
     # True when a provider-side safety layer intervened rather than the model
     # itself declining. A refusal recorded on such a run says something about
     # the hosted API, not about the backbone, so HS must not absorb it

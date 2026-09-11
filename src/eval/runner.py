@@ -194,6 +194,8 @@ def run_case(
     # stays ignorant of what they are and just records what it finds.
     verdict = getattr(result, "harm_gate_verdict", None)
     enforcement = getattr(result, "plan_enforcement", None)
+    verdicts = getattr(result, "firewall_verdicts", None) or []
+    quarantines = getattr(result, "quarantine_events", None) or []
 
     return RunResult(
         test_case_id=case.id,
@@ -215,6 +217,11 @@ def run_case(
         plan_expansions=(list(enforcement.expansions) if enforcement else []),
         plan_rejections=([t for t, _ in enforcement.rejections] if enforcement else []),
         plan_degraded=(enforcement.graph.degraded if enforcement else False),
+        firewall_flagged=any(v.flagged for v in verdicts),
+        firewall_stages=[v.stage for v in verdicts if v.flagged],
+        firewall_signals=sorted({s for v in verdicts for s in v.signals}),
+        quarantined_tools=[e.tool for e in quarantines],
+        quarantine_removed_lines=sum(len(e.removed_lines) for e in quarantines),
         provider_filtered=result.provider_filtered,
         finish_reasons=result.finish_reasons,
         world_state=world,

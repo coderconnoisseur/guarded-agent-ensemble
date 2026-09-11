@@ -276,8 +276,8 @@ class TestConditionB:
         assert pipeline.enabled_modules == frozenset()
 
     def test_unimplemented_module_raises_rather_than_silently_passing(self):
-        with pytest.raises(NotImplementedError, match="firewall"):
-            ConditionB(FakeClient(), enabled_modules={"firewall"})
+        with pytest.raises(NotImplementedError, match="misalignment"):
+            ConditionB(FakeClient(), enabled_modules={"misalignment"})
 
     def test_unknown_module_raises(self):
         with pytest.raises(ValueError, match="Unknown"):
