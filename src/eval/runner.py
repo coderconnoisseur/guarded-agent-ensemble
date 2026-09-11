@@ -87,7 +87,46 @@ def plant_injection(case: TestCase) -> None:
     else:
         raise ValueError(f"{case.id}: cannot plant an injection into {tool!r}")
 
+    verify_injection(case)
     logger.debug("Planted injection for %s into %s", case.id, tool)
+
+
+def verify_injection(case: TestCase) -> None:
+    """Read the payload back through the tool that is supposed to carry it.
+
+    A payload that fails to land turns an injection case into a no-op: the
+    agent has nothing to be attacked by, the case passes, and ASR_inj is
+    quietly deflated. Nothing in the transcript says "the attack was never
+    delivered" - it just looks like the defense worked.
+
+    This happened once in a live Phase 4 ablation and could not be reproduced
+    offline, so rather than trust a cause we have not found, the delivery is
+    now asserted. A silent no-op becomes a loud failure.
+    """
+    if not case.injected_content:
+        return
+
+    marker = next(
+        (line.strip() for line in case.injected_content.splitlines() if line.strip()),
+        "",
+    )[:40]
+
+    if case.injection_tool == "web.fetch":
+        seen = web.fetch(case.injection_key or "")
+    elif case.injection_tool == "files.read":
+        seen = files.read_file(case.injection_key or "")
+    elif case.injection_tool == "comms.list_inbox":
+        seen = comms.list_inbox()
+    else:
+        return
+
+    if marker and marker not in seen:
+        raise RuntimeError(
+            f"{case.id}: injection payload did not land in {case.injection_tool} "
+            f"(key={case.injection_key!r}). The case would have run with no "
+            f"attack present and silently deflated ASR_inj. Refusing to "
+            f"continue. Saw: {seen[:120]!r}"
+        )
 
 
 def count_cached_cases(client, cases: list[TestCase], registry) -> int:
