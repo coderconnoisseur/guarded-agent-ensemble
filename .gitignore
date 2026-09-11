@@ -1,6 +1,12 @@
 # Secrets
 .env
 
+# Third-party paper PDFs. Kept locally, never published: this repo is public
+# and the six source papers are other people's copyrighted work under licences
+# we have not individually verified. docs/papers/README.md says where to get
+# each one.
+docs/papers/*.pdf
+
 # LLM client state (§5.2 points 3 & 4)
 src/llm/cache/
 src/llm/.budget.json
