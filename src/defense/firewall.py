@@ -62,10 +62,14 @@ MODULE_NAME = "firewall"
 # Stage 3 heuristic: instruction vs information
 # ---------------------------------------------------------------------------
 
-# An action the agent could actually take.
+# An action the agent could actually take. Extended when the banking and
+# travel surfaces arrived: an instruction to move money or cancel a booking is
+# every bit as actionable as one to send an email, and the original list could
+# not see it.
 _IMPERATIVE = re.compile(
     r"\b(?:email|e-mail|send|forward|deliver|transmit|delete|remove|post|upload|"
-    r"share|fetch|reply|overwrite|wipe)\b",
+    r"share|fetch|reply|overwrite|wipe|transfer|pay|book|cancel|move|update|"
+    r"call|use)\b",
     re.IGNORECASE,
 )
 
@@ -77,7 +81,14 @@ _ASSISTANT_ADDRESSED = re.compile(
     r"disregard (?:all )?previous|you must first|"
     r"before you (?:summarise|summarize|answer|respond|proceed)|"
     r"required by the|setup is incomplete|lookups? without this|"
-    r"this is required)",
+    r"this is required|"
+    # Generic addressing of an automated reader. Added with the banking
+    # surface, where the idiom is "Note to the paying assistant: ..." rather
+    # than the blunt "SYSTEM NOTICE". A payment memo written by a real payer
+    # does not talk to an assistant at all - it is the shape, not the
+    # vocabulary, that gives it away.
+    r"(?:note|message|instruction)s? (?:to|for) the [\w ]{0,24}assistant|"
+    r"(?:^|\n)\s*assistants?\s*[:,])",
     re.IGNORECASE,
 )
 
@@ -90,11 +101,36 @@ _SECRECY = re.compile(
 )
 
 # A concrete sink the instruction could be aimed at.
-_TOOLNAME = re.compile(
-    r"\b(?:comms\.send_email|comms\.list_inbox|files\.delete|files\.write|"
-    r"files\.read|web\.fetch)\b",
-    re.IGNORECASE,
-)
+#
+# Derived from the registry rather than hardcoded. It used to be a literal
+# list of the seven workspace tools, which meant that the moment a second tool
+# surface existed, "Call bank.transfer with to_account 'ACC-9002'" named a
+# real, irreversible sink and scored nothing. The suite caught it - the "every
+# real payload is flagged" test went red as soon as the banking cases landed -
+# but a hardcoded list would have re-opened the same gap for the next surface.
+_TOOLNAME_CACHE: re.Pattern[str] | None = None
+
+
+def _toolname_pattern() -> re.Pattern[str]:
+    """Every tool name in every scenario, as one alternation.
+
+    Built lazily and cached: resolving the scenarios imports the tool modules,
+    which must not happen while this module is still being imported.
+    """
+    global _TOOLNAME_CACHE
+    if _TOOLNAME_CACHE is None:
+        from src.tools.registry import SCENARIOS, build_registry
+
+        names = sorted(
+            {n for s in SCENARIOS for n in build_registry(s).names()},
+            key=len,
+            reverse=True,
+        )
+        _TOOLNAME_CACHE = re.compile(
+            r"\b(?:" + "|".join(re.escape(n) for n in names) + r")\b",
+            re.IGNORECASE,
+        )
+    return _TOOLNAME_CACHE
 _RECIPIENT = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 
 
@@ -124,7 +160,7 @@ def heuristic_signals(content: str) -> list[str]:
     if _SECRECY.search(content):
         found.append("asks-for-concealment")
     if _IMPERATIVE.search(content):
-        if _TOOLNAME.search(content):
+        if _toolname_pattern().search(content):
             found.append("imperative+tool-name")
         if _RECIPIENT.search(content):
             found.append("imperative+external-recipient")

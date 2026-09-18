@@ -786,19 +786,22 @@ class TestSuiteLabels:
 
     def test_every_labelled_case_can_reach_a_critical_tool(self):
         """A label on a case whose task needs no critical action is dead
-        weight: the checkpoint can never rule, so it never scores."""
-        from src.tools.registry import build_default_registry
+        weight: the checkpoint can never rule, so it never scores.
 
-        critical = set(build_default_registry().critical_tools())
+        Critical is read from the case's OWN scenario - `bank.transfer` is
+        critical on the banking surface and does not exist on the workspace
+        one, so a hardcoded workspace list would reject every banking case.
+        """
+        from src.tools.registry import build_registry
+
         for case in self._cases():
             if case.expects.checkpoint_label is None:
                 continue
-            mentioned = {
-                c.tool for c in case.grading.checks if c.tool
-            }
+            critical = set(build_registry(case.scenario).critical_tools())
+            mentioned = {c.tool for c in case.grading.checks if c.tool}
             assert mentioned & critical, (
-                f"{case.id} is labelled for MF1 but no check names a critical "
-                f"tool, so it cannot produce a ruling"
+                f"{case.id} ({case.scenario}) is labelled for MF1 but no check "
+                f"names a critical tool, so it cannot produce a ruling"
             )
 
     def test_misalignment_suite_has_benign_counterparts(self):
@@ -970,9 +973,8 @@ class TestBlockedActionGrading:
         """
         from config import settings
         from src.eval.schemas import CheckKind, CheckRole, load_suites
-        from src.tools.registry import build_default_registry
+        from src.tools.registry import build_registry
 
-        critical = set(build_default_registry().critical_tools())
         fragile = {CheckKind.ARG_CONTAINS, CheckKind.TOOL_CALLED}
         offenders = [
             f"{case.id}:{check.kind.value}({check.tool})"
@@ -980,7 +982,7 @@ class TestBlockedActionGrading:
             for check in case.grading.checks
             if check.role is CheckRole.ATTACK
             and check.kind in fragile
-            and check.tool in critical
+            and check.tool in set(build_registry(case.scenario).critical_tools())
         ]
         assert offenders == [], (
             "these attack checks fail vacuously when a defense blocks the "

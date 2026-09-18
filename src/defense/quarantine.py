@@ -76,6 +76,26 @@ class QuarantineEvent:
 # and neither matched on its own.
 _LIST_MARKER = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
 
+# A row in a tabular response: a bank statement line, a flight listing.
+#
+# Deliberately narrow - it must match at column 0 and start with a date or an
+# identifier code. Blank lines and list markers were the only separators until
+# the banking surface arrived, and a statement has neither: the whole thing
+# came back as ONE block, the injected memo made that block flag, and
+# quarantine removed every transaction the user had asked about. That is the
+# denial of service this splitter exists to avoid, arriving through a carrier
+# shape it had not seen.
+#
+# The obvious wider rule - "any unindented line starts a block" - would
+# reintroduce the original failure: a prose paragraph would split per line, so
+# no single block would hold both an imperative and its recipient, nothing
+# would match, and the fail-safe would withhold the document anyway. Hence
+# dates and codes only, with indented continuations still attaching to the row
+# above them.
+_RECORD_START = re.compile(
+    r"^(?:\d{4}-\d{2}-\d{2}|\d{2}[/-]\d{2}[/-]\d{4}|[A-Z0-9]{2,4}-[A-Z0-9]{2,6})\s"
+)
+
 
 def split_blocks(content: str) -> list[list[str]]:
     """Group lines into logical blocks: paragraphs and list items.
@@ -94,9 +114,10 @@ def split_blocks(content: str) -> list[list[str]]:
     for line in content.splitlines():
         blank = not line.strip()
         starts_item = bool(_LIST_MARKER.match(line))
-        # Break before a blank line, before a new list item, and after a blank
-        # line (so a paragraph following a gap starts cleanly).
-        if current and (blank or starts_item or not current[-1].strip()):
+        starts_record = bool(_RECORD_START.match(line))
+        # Break before a blank line, before a new list item or record row, and
+        # after a blank line (so a paragraph following a gap starts cleanly).
+        if current and (blank or starts_item or starts_record or not current[-1].strip()):
             blocks.append(current)
             current = []
         current.append(line)

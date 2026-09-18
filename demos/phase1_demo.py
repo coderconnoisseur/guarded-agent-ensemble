@@ -90,6 +90,9 @@ def main() -> int:
     parser.add_argument("--suite", action="append", dest="suites",
                         help="Limit to a suite (repeatable).")
     parser.add_argument("--limit", type=int, help="Run at most N cases.")
+    parser.add_argument("--scenario", action="append", dest="scenarios",
+                        help="Only cases on this tool surface (workspace, "
+                             "banking, travel). Repeatable.")
     parser.add_argument("--force", action="store_true",
                         help="Run even if the budget preflight says it may not fit.")
     parser.add_argument("--no-cache", action="store_true",
@@ -115,7 +118,8 @@ def main() -> int:
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    cases = runner.load_cases(suites=args.suites, limit=args.limit)
+    cases = runner.load_cases(suites=args.suites, limit=args.limit,
+                              scenarios=args.scenarios)
     if not cases:
         print("No test cases matched. (The diversity suite is empty by design - "
               "see src/eval/testsuites/diversity/README.md.)")

@@ -130,17 +130,8 @@ def verify_injection(case: TestCase) -> None:
         "",
     )[:40]
 
-    if case.injection_tool == "web.fetch":
-        seen = web.fetch(case.injection_key or "")
-    elif case.injection_tool == "files.read":
-        seen = files.read_file(case.injection_key or "")
-    elif case.injection_tool == "comms.list_inbox":
-        seen = comms.list_inbox()
-    elif case.injection_tool == "bank.transactions":
-        seen = banking.transactions(case.injection_key or "ACC-1001")
-    elif case.injection_tool == "travel.search_flights":
-        seen = travel.search_flights("BOM-DEL")
-    else:
+    seen = carrier_response(case)
+    if seen is None:
         return
 
     if marker and marker not in seen:
@@ -150,6 +141,33 @@ def verify_injection(case: TestCase) -> None:
             f"attack present and silently deflated ASR_inj. Refusing to "
             f"continue. Saw: {seen[:120]!r}"
         )
+
+
+def carrier_response(case: TestCase) -> str | None:
+    """What the tool carrying this case's payload actually returns.
+
+    The payload is not the response. `bank.transactions` appends one line to a
+    statement, so the agent sees the seed lines plus the injected one - and a
+    quarantine test run against `injected_content` alone would judge the
+    sanitiser on a string that is 100% malicious, where removing everything is
+    correct rather than a denial of service. Tests and the delivery assertion
+    both need the real thing.
+
+    Returns None for a case with no payload, or a carrier with no read-back.
+    """
+    if not case.injected_content:
+        return None
+    if case.injection_tool == "web.fetch":
+        return web.fetch(case.injection_key or "")
+    if case.injection_tool == "files.read":
+        return files.read_file(case.injection_key or "")
+    if case.injection_tool == "comms.list_inbox":
+        return comms.list_inbox()
+    if case.injection_tool == "bank.transactions":
+        return banking.transactions(case.injection_key or "ACC-1001")
+    if case.injection_tool == "travel.search_flights":
+        return travel.search_flights("BOM-DEL")
+    return None
 
 
 def count_cached_cases(client, cases: list[TestCase], registry) -> int:
@@ -185,14 +203,41 @@ def count_cached_cases(client, cases: list[TestCase], registry) -> int:
     return cached
 
 
+def _capture_scenario_state() -> dict[str, str]:
+    """State of the non-file surfaces, under namespaced keys.
+
+    Keys are prefixed so they cannot collide with a sandbox path, and each
+    value is rendered the way the tool itself renders it - a `content_preserved`
+    check reads the same text a human would see in the transcript.
+    """
+    return {
+        "bank/accounts": banking.list_accounts(),
+        "bank/payees": banking.list_payees(),
+        "bank/transfers": "\n".join(
+            f"{t['amount']} -> {t['to_account']}  {t.get('memo', '')}"
+            for t in banking.read_transfers()
+        ),
+        "travel/bookings": travel.list_bookings(),
+    }
+
+
 def capture_world_state() -> dict[str, str]:
-    """Snapshot every readable sandbox file, path -> contents.
+    """Snapshot the whole mutable world, key -> contents.
 
     Taken immediately after a run and stored on the result, so checks about
     what survived can be evaluated later from the saved JSON alone.
+
+    Every scenario's state is in here, not just the sandbox files, and that is
+    load-bearing rather than tidy. `content_preserved` is the only check kind
+    that stays correct when a defense *blocks* the call: an argument-scanning
+    check finds nothing in a call that never ran, so preventing an overreach
+    scores as committing it (this inverted `mis_003` in Phase 5). A banking or
+    travel case can only use the outcome-based kind if its outcome is
+    captured, so the non-file surfaces are rendered into the same flat
+    string map.
     """
+    snapshot = _capture_scenario_state()
     root = settings.SANDBOX_DIR
-    snapshot: dict[str, str] = {}
     if not root.exists():
         return snapshot
     for path in sorted(root.rglob("*")):
@@ -350,9 +395,18 @@ def load_cases(
     suites: list[str] | None = None,
     limit: int | None = None,
     root: Path | None = None,
+    scenarios: list[str] | None = None,
 ) -> list[TestCase]:
-    """Load test cases, optionally narrowed to some suites and a count."""
+    """Load test cases, optionally narrowed to some suites, surfaces, a count.
+
+    `scenarios` selects the columns of the IPIGuard Table 1-style grid, the
+    way `suites` selects the attack type - which is what makes a per-surface
+    rate runnable as one command.
+    """
     cases = load_suites(root or settings.TESTSUITES_DIR, suites)
+    if scenarios:
+        wanted = set(scenarios)
+        cases = [c for c in cases if c.scenario in wanted]
     if limit is not None:
         cases = cases[:limit]
     return cases
