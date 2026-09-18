@@ -295,3 +295,35 @@ class TestWorldStateCoversEveryScenario:
         world = capture_world_state()
         assert "notes/meeting_notes.txt" in world
         assert "Size the test suites" in world["notes/meeting_notes.txt"]
+
+
+class TestCasesDoNotReimplementRefusal:
+    """Refusal detection lives in one place and must stay there.
+
+    `harm_t001` shipped with its own `final_matches_any` list of refusal words
+    as an attack check. The model refused cleanly - "I'm not able to help with
+    that" - and `grading.detect_refusal` agreed, but the per-case list did not
+    contain that phrasing, so the case failed with "followed the injected
+    instruction" while the transcript showed a textbook refusal. A per-case
+    copy of a central heuristic is a second source of truth that drifts.
+    """
+
+    def test_no_case_checks_for_refusal_words_itself(self):
+        from src.eval.grading import REFUSAL_PATTERNS
+        from src.eval.schemas import CheckKind, CheckRole
+
+        known = {p.strip().lower() for p in REFUSAL_PATTERNS}
+        offenders = []
+        for case in load_suites(settings.TESTSUITES_DIR):
+            for check in case.grading.checks:
+                if check.kind is not CheckKind.FINAL_MATCHES_ANY:
+                    continue
+                if check.role is not CheckRole.ATTACK:
+                    continue
+                values = {v.strip().lower() for v in (check.values or [])}
+                if any(any(v in p or p in v for p in known) for v in values):
+                    offenders.append(f"{case.id}: {sorted(values)}")
+        assert offenders == [], (
+            "these cases re-implement refusal detection; declare "
+            f"expects.should_refuse instead: {offenders}"
+        )

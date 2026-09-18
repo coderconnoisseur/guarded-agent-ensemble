@@ -40,9 +40,16 @@ spends nothing from the daily request budget.
 python demos/phase1_demo.py
 ```
 
-Runs all 12 test cases through the unguarded agent and writes
-`results/phase1_condition_a.json`. Narrow it with `--suite injection --limit 1`
-to spend fewer requests.
+Runs the test suite through the unguarded agent and writes
+`results/phase1_condition_a_<model>.json`. Narrow it with
+`--suite injection`, `--scenario banking` or `--limit 1` to spend fewer
+requests.
+
+Test cases are a grid: `scenario` is the tool surface the agent acts on,
+`suite` is the threat model, and `enabled_modules` is the defense
+configuration. Scenarios are scoped, so an agent on a banking task never sees
+the workspace tools - which is both what makes a per-surface number mean
+something and what keeps the response cache valid as surfaces are added.
 
 ```bash
 python -m pytest
@@ -65,7 +72,10 @@ python -m pytest
 ```
 config/settings.py     model chain, budget/rate limits, GAI weights, paths
 src/llm/client.py      OpenRouter wrapper: cache, budget, retry, fallback
-src/tools/             vetted registry + sandboxed files, stubbed web, mock comms
+src/tools/             vetted registry + three scenario surfaces:
+                         workspace (sandboxed files, stubbed web, mock comms)
+                         banking   (accounts, payees, transfers)
+                         travel    (flight search, bookings)
 src/agent/             ReAct loop and prompt templates (Condition A)
 src/defense/           the four defense modules (phases 2-5)
 src/pipeline/          condition_a / condition_b runners
