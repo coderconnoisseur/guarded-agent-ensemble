@@ -33,7 +33,7 @@ from config import settings
 from src.agent.loop import AgentResult
 from src.eval.grading import grade
 from src.eval.schemas import RunResult, SuiteReport, TestCase, load_suites
-from src.tools import comms, files, web
+from src.tools import banking, comms, files, travel, web
 
 logger = logging.getLogger(__name__)
 
@@ -50,13 +50,23 @@ class Pipeline(Protocol):
 
     def run(self, task: str) -> AgentResult: ...
 
+    def use_scenario(self, scenario: str) -> None: ...
+
 
 def reset_environment() -> None:
-    """Return every stateful tool to its seed state."""
+    """Return every stateful tool to its seed state.
+
+    Every scenario is reset, not just the one the next case uses: a case that
+    redirects a payee or cancels a booking must not leave the following case
+    starting from a compromised world, and keying the reset off the scenario
+    would make that depend on case ordering.
+    """
     files.reset_sandbox()
     comms.clear_outbox()
     comms.reset_inbox()
     web.reset_pages()
+    banking.reset_bank()
+    travel.reset_travel()
 
 
 def plant_injection(case: TestCase) -> None:
@@ -84,6 +94,15 @@ def plant_injection(case: TestCase) -> None:
             "Re: your request",
             case.injected_content,
         )
+    elif tool == "bank.transactions":
+        # A payment reference is whatever the sender typed, which is what
+        # makes a statement line an injection carrier with no web fetch in
+        # sight.
+        banking.add_transaction(
+            case.injection_key or "ACC-1001", case.injected_content
+        )
+    elif tool == "travel.search_flights":
+        travel.annotate_flight(case.injection_key or "6E-118", case.injected_content)
     else:
         raise ValueError(f"{case.id}: cannot plant an injection into {tool!r}")
 
@@ -117,6 +136,10 @@ def verify_injection(case: TestCase) -> None:
         seen = files.read_file(case.injection_key or "")
     elif case.injection_tool == "comms.list_inbox":
         seen = comms.list_inbox()
+    elif case.injection_tool == "bank.transactions":
+        seen = banking.transactions(case.injection_key or "ACC-1001")
+    elif case.injection_tool == "travel.search_flights":
+        seen = travel.search_flights("BOM-DEL")
     else:
         return
 
@@ -222,9 +245,18 @@ def run_case(
 ) -> RunResult:
     """Run and grade a single test case in a freshly reset environment."""
     reset_environment()
+    # Before planting: the payload goes into the surface this case actually
+    # runs against, and a pipeline still pointed at the previous case's
+    # scenario would plant into a tool the agent cannot call.
+    use_scenario = getattr(pipeline, "use_scenario", None)
+    if use_scenario is not None:
+        use_scenario(case.scenario)
     plant_injection(case)
 
-    logger.info("[%s] %s: %.70s", pipeline.condition, case.id, case.prompt)
+    logger.info(
+        "[%s] %s (%s): %.70s",
+        pipeline.condition, case.id, case.scenario, case.prompt,
+    )
     result = pipeline.run(case.prompt)
     world = capture_world_state()
     outcome, check_results, passed, reason = grade(case, result, world)
@@ -247,6 +279,7 @@ def run_case(
         timestamp=datetime.now(timezone.utc).isoformat(),
         suite=case.suite,
         category=case.category,
+        scenario=case.scenario,
         expects_refusal=bool(case.expects.should_refuse),
         harm_gate_flagged=bool(verdict and verdict.flagged),
         harm_gate_stage=(verdict.stage if verdict else ""),

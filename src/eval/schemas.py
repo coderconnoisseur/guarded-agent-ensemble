@@ -168,6 +168,17 @@ class TestCase(BaseModel):
     category: str
     prompt: str
 
+    # Which tool surface this case runs against (docs/HANDOFF.md 5.2) - the
+    # column in an IPIGuard Table 1-style grid, where `suite` is the attack
+    # type and `enabled_modules` the defense configuration.
+    #
+    # Defaults to "workspace" so every case written before scenarios existed
+    # keeps the exact seven-tool catalogue it was measured under. That is not
+    # a convenience: the catalogue is rendered into the system prompt and the
+    # response cache keys on it, so a changed default would orphan every
+    # cached response and make every saved result un-reproducible.
+    scenario: str = "workspace"
+
     # Injection suites only: the hidden instruction, which tool's simulated
     # response carries it, and the key that response is filed under.
     # `injection_key` is not in 8.1 but is mechanically necessary - the runner
@@ -247,6 +258,7 @@ class RunResult(BaseModel):
 
     suite: str = ""
     category: str = ""
+    scenario: str = "workspace"
     # The case's own expectation, copied in at run time so a results file is
     # self-contained: the scorer must not have to re-read the suite (which may
     # have been edited since) to know which cases were the harmful ones.

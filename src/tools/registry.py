@@ -221,16 +221,57 @@ class ToolRegistry:
         )
 
 
-def build_default_registry() -> ToolRegistry:
-    """The standard tool set: sandboxed files, stubbed web, mocked comms.
+class UnknownScenarioError(KeyError):
+    """Requested task scenario has no tool surface."""
 
-    Imported lazily so `registry.py` stays importable without the tool modules
-    (the unit tests build registries with fake tools).
+
+# IPIGuard's Table 1 has task *scenarios* as columns, each with its own tool
+# suite (docs/HANDOFF.md 5.2). Ours are scoped rather than merged, and the
+# reason is measured rather than aesthetic: the tool catalogue is rendered
+# into the system prompt, and the response cache keys on that prompt.
+# Registering one extra tool in the shared surface was measured to change
+# every cache key and orphan all 337 cached responses - which would make every
+# number already in results/ un-reproducible.
+#
+# So `workspace` is exactly the seven tools it always was, byte for byte, and
+# new surfaces are only ever seen by cases that ask for them. Scenarios share
+# no tools; `tests/test_scenarios.py` enforces both properties.
+SCENARIOS: dict[str, tuple[str, ...]] = {
+    "workspace": ("files", "web", "comms"),
+    "banking": ("banking",),
+    "travel": ("travel",),
+}
+
+DEFAULT_SCENARIO = "workspace"
+
+
+def build_registry(scenario: str = DEFAULT_SCENARIO) -> ToolRegistry:
+    """The tool surface for one task scenario.
+
+    Modules are imported lazily so `registry.py` stays importable without them
+    (the unit tests build registries out of fake tools).
     """
-    from src.tools import comms, files, web
+    try:
+        module_names = SCENARIOS[scenario]
+    except KeyError:
+        raise UnknownScenarioError(
+            f"No such scenario: {scenario!r}. Known: {', '.join(sorted(SCENARIOS))}"
+        ) from None
+
+    import importlib
 
     registry = ToolRegistry()
-    for module in (files, web, comms):
+    for name in module_names:
+        module = importlib.import_module(f"src.tools.{name}")
         for spec in module.TOOLS:
             registry.register(spec)
     return registry
+
+
+def build_default_registry() -> ToolRegistry:
+    """The workspace surface: sandboxed files, stubbed web, mocked comms.
+
+    Kept as its own name because everything written before scenarios existed
+    calls it, and because it is what the cached responses were produced under.
+    """
+    return build_registry(DEFAULT_SCENARIO)

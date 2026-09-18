@@ -21,7 +21,7 @@ from typing import Any
 from config import settings
 from src.agent.loop import AgentResult, ReActAgent
 from src.llm.client import LLMClient
-from src.tools.registry import ToolRegistry, build_default_registry
+from src.tools.registry import ToolRegistry, build_default_registry, build_registry
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +65,18 @@ class ConditionA:
         if self.model:
             agent_kwargs.setdefault("model", self.model)
         self.agent = ReActAgent(self.client, self.registry, **agent_kwargs)
+
+    def use_scenario(self, scenario: str) -> None:
+        """Switch to a task scenario's tool surface (docs/HANDOFF.md 5.2).
+
+        The eval runner calls this per case, because a case declares which
+        surface it runs against and an agent on a banking task must not see
+        the workspace tools. `workspace` rebuilds the original seven tools
+        byte-identically, so a case that never heard of scenarios keeps its
+        cached responses.
+        """
+        self.registry = build_registry(scenario)
+        self.agent.registry = self.registry
 
     def run(self, task: str) -> AgentResult:
         """Execute one task and return the full, inspectable result."""

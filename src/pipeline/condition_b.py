@@ -43,7 +43,7 @@ from src.defense.planner import (
     Planner,
 )
 from src.llm.client import LLMClient
-from src.tools.registry import ToolRegistry, build_default_registry
+from src.tools.registry import ToolRegistry, build_default_registry, build_registry
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +145,26 @@ class ConditionB:
             self.registry_integrity = scan_tool_descriptions(self.registry)
         else:
             self.registry_integrity = []
+
+    def use_scenario(self, scenario: str) -> None:
+        """Switch to a task scenario's tool surface (docs/HANDOFF.md 5.2).
+
+        The misalignment wrapper has to be rebuilt, not just re-pointed: it is
+        constructed around a registry, and leaving it wrapping the previous
+        scenario's would have it guarding tools this case cannot call while
+        waving through the ones it can. The plan and firewall wrappers are
+        built per run, so they pick the new surface up on their own.
+        """
+        self.registry = build_registry(scenario)
+        if self.checkpoint is not None:
+            self.misalignment_registry = MisalignmentRegistry(
+                self.registry, self.checkpoint
+            )
+        if self.firewall is not None:
+            # ShieldMCP Stage 1 is per surface: a new scenario's descriptions
+            # have not been integrity-checked by the scan done at wiring time.
+            self.registry_integrity = scan_tool_descriptions(self.registry)
+        self.agent.registry = self.registry
 
     # -- module: Harm Gate -------------------------------------------------
 
