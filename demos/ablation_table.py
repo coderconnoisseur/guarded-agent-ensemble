@@ -23,6 +23,7 @@ import argparse
 import glob
 import io
 import json
+import pathlib
 import sys
 from pathlib import Path
 
@@ -56,11 +57,39 @@ def rate(n: int, d: int) -> str:
     return f"{n}/{d}={n / d:.2f}" if d else "n/a"
 
 
-def load(pattern: str) -> dict | None:
-    matches = sorted(glob.glob(str(settings.RESULTS_DIR / pattern)))
+def load(pattern: str, root=None) -> tuple[dict | None, str]:
+    """The broadest snapshot matching `pattern`, plus the file it came from.
+
+    "Broadest" rather than "last alphabetically", and the filename is returned
+    so it can be printed. The old version globbed and took `matches[-1]`, so a
+    narrowly-scoped run could become the "Condition A (no defenses)" row purely
+    by sorting late - which is exactly what happened when a
+    `--scenario banking --scenario travel` run landed in results/, and nothing
+    on screen said which file the row was built from.
+    """
+    directory = root if root is not None else settings.RESULTS_DIR
+    matches = sorted(glob.glob(str(pathlib.Path(directory) / pattern)))
     if not matches:
-        return None
-    return json.load(io.open(matches[-1], encoding="utf-8"))
+        return None, ""
+
+    loaded = [(json.load(io.open(m, encoding="utf-8")), m) for m in matches]
+
+    # Pinned backbone only. A row from another model is not comparable with
+    # one from the pinned model (HANDOFF 3), and mixing them is invisible in a
+    # table of rates: the Condition A row was briefly built from a
+    # gemini-2.5-flash file and reported ASR_inj 1.00 beside four qwen rows
+    # reporting 0.00. Dropping the row entirely is the honest outcome - it
+    # says "this needs re-running" instead of quietly answering with the
+    # wrong model.
+    pinned = [
+        pair for pair in loaded
+        if settings.BACKBONE_MODEL in (pair[0].get("backbone_model") or "")
+    ]
+    if not pinned:
+        return None, ""
+
+    data, path = max(pinned, key=lambda pair: len(pair[0].get("results", [])))
+    return data, pathlib.Path(path).name
 
 
 def mf1_for(rows: dict) -> str:
@@ -129,8 +158,9 @@ def main() -> int:
     cases = {c.id: c for c in load_suites(settings.TESTSUITES_DIR)}
 
     loaded: list[tuple[str, dict, set[str]]] = []
+    sources: dict[str, str] = {}
     for label, pattern in SNAPSHOTS:
-        data = load(pattern)
+        data, source = load(pattern)
         if data is None:
             continue
         rows = {
@@ -138,6 +168,7 @@ def main() -> int:
             if not r.get("error") and r["test_case_id"] in cases
         }
         loaded.append((label, rows, set(rows)))
+        sources[label] = source
 
     if not loaded:
         raise SystemExit("No ablation snapshots in results/. Run the phase demos.")
@@ -155,6 +186,13 @@ def main() -> int:
     case_sets = [ids for _, _, ids in loaded]
     common = set.intersection(*case_sets)
     union = set.union(*case_sets)
+
+    banner("EVIDENCE")
+    print(f"  Backbone: {settings.BACKBONE_MODEL} (pinned). Snapshots from any")
+    print("  other model are ignored, not mixed in. Each row is the broadest")
+    print("  matching snapshot for that configuration.")
+    for label, _, ids in loaded:
+        print(f"    {label:44} {len(ids):>3} cases  <- {sources.get(label, '?')}")
 
     banner("COMPARABILITY")
     if len(common) == len(union):

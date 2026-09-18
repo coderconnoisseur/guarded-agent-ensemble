@@ -417,20 +417,52 @@ def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", text).strip("-").lower() or "unknown"
 
 
+def default_report_name(report: SuiteReport, phase: str = "phase1") -> str:
+    """Filename for a run, carrying the backbone AND the scope it covered.
+
+    The scope half exists because leaving it out has destroyed a baseline
+    twice. The name used to be `<phase>_condition_<x>_<model>.json`, so a
+    narrowed run wrote to the same path as the full one: `--suite injection`
+    overwrote the Condition A baseline (docs/HANDOFF.md 5.1), and later
+    `--scenario banking --scenario travel` overwrote it again, turning the
+    cumulative ablation's "Condition A (no defenses)" row into 13
+    banking/travel cases.
+
+    Nothing errors when that happens. The table simply reports a different
+    denominator under the same label - the class of defect this project treats
+    as worse than a crash, because the run still produces a plausible number.
+
+    A run covering every suite and every scenario keeps the plain name, so
+    existing full-run files are unaffected.
+    """
+    parts = [phase, f"condition_{report.condition.lower()}", _slug(report.backbone_model)]
+
+    all_cases = load_suites(settings.TESTSUITES_DIR)
+    covered_suites = {r.suite for r in report.results if r.suite}
+    covered_scenarios = {r.scenario for r in report.results if r.scenario}
+
+    if covered_suites and covered_suites != {c.suite for c in all_cases}:
+        parts.append("-".join(sorted(covered_suites)))
+    if covered_scenarios and covered_scenarios != {c.scenario for c in all_cases}:
+        parts.append("-".join(sorted(covered_scenarios)))
+
+    return "_".join(parts) + ".json"
+
+
 def write_report(
     report: SuiteReport, path: Path | None = None, phase: str = "phase1"
 ) -> Path:
     """Persist the run to results/ (gitignored).
 
-    The filename carries the backbone, not just the condition. Earlier runs
-    all wrote `phase1_condition_a.json`, so each new backbone silently
-    destroyed the previous one's evidence - a cross-model comparison then had
-    nothing behind it but numbers quoted from a terminal that had scrolled
-    away. Runs now accumulate instead.
+    The filename carries the backbone and the scope, not just the condition.
+    Earlier runs all wrote `phase1_condition_a.json`, so each new backbone
+    silently destroyed the previous one's evidence - a cross-model comparison
+    then had nothing behind it but numbers quoted from a terminal that had
+    scrolled away. The same thing then happened along the *scope* axis twice
+    (see `default_report_name`). Runs now accumulate on both axes.
     """
     if path is None:
-        name = f"{phase}_condition_{report.condition.lower()}_{_slug(report.backbone_model)}.json"
-        path = settings.RESULTS_DIR / name
+        path = settings.RESULTS_DIR / default_report_name(report, phase)
     written = report.write(path)
     logger.info("Wrote %d result(s) to %s", len(report.results), written)
     return written

@@ -1,7 +1,7 @@
 # Handoff — Guarded Agent Ensemble
 
 **Written:** 2026-09-11 · **Repo:** https://github.com/coderconnoisseur/guarded-agent-ensemble (public)
-**Branch:** `master` · **21 commits** · **438 tests passing**
+**Branch:** `master` · **22 commits** · **446 tests passing**
 **Phases 0–5 complete**, plus the §5.2 coverage expansion (scenario
 columns). Next: the §5.1 frozen-suite re-run — budget it as its own
 multi-session job, see §5.2a.
@@ -20,7 +20,7 @@ the measurement that produced it in a comment beside it. Keep that habit.
 
 **The numbers are the deliverable.** This project's claim is a before/after
 metric. That makes any bug which silently moves a number worse than a crash —
-seven such bugs have already been found and each is now guarded by a test:
+ten such bugs have already been found and each is now guarded by a test:
 
 | Bug | Symptom | Guard now in place |
 |---|---|---|
@@ -31,6 +31,9 @@ seven such bugs have already been found and each is now guarded by a test:
 | A case re-implemented refusal detection with its own word list | `harm_t001` refused cleanly with *"I'm not able to help with that"*; the central detector agreed, the per-case list did not, and the case was scored as complying | refusal comes only from `expects.should_refuse` via `detect_refusal`; a structural test rejects any case whose own check duplicates it |
 | Firewall sinks were a hardcoded list of the seven workspace tools | `bank.transfer` named in an injected memo scored nothing, so a banking payload went undetected | sinks derived from the registry, so a new surface cannot re-open it |
 | Quarantine split blocks on blank lines and list markers only | a bank statement has neither, so the whole statement was one block and quarantine removed every transaction the user asked for — a denial of service | tabular rows start blocks, narrowly (dates and identifier codes), with prose behaviour asserted unchanged |
+| Result filenames carried the model but not the **scope** | a narrowed run overwrote the full Condition A baseline — twice: once by `--suite injection`, once by `--scenario banking travel`. The ablation's "Condition A (no defenses)" row then reported 13 banking/travel cases under a full-suite label | `default_report_name()` appends the suites/scenarios covered whenever a run is narrowed; full runs keep the plain name |
+| `ablation_table` globbed and took the **last match alphabetically** | any file could become a row by sorting late, and nothing on screen said which file a row came from | broadest matching snapshot wins, the source filename is printed in a new EVIDENCE panel |
+| `ablation_table` mixed **backbones** | the Condition A row was silently built from a `gemini-2.5-flash` file, reporting `ASR_inj` 1.00 and `HS` 0.40 beside four qwen rows reporting 0.00 | snapshots from any model but `BACKBONE_MODEL` are ignored; a configuration with no pinned snapshot loses its row rather than answering with the wrong model |
 
 **Report failures plainly.** Four results in the repo are unflattering and are
 documented as such: the ensemble causes an over-refusal (`inj_006`), the
@@ -71,7 +74,7 @@ python demos/phase1_demo.py --scenario banking # one column of the grid
 python demos/show_case.py inj_005              # any saved case, legibly
 python demos/compare_backbones.py              # per-arm metrics + failure overlap
 python demos/ablation_table.py                 # cumulative ablation (refuses if incomparable)
-python -m pytest                               # 438 tests, all offline
+python -m pytest                               # 446 tests, all offline
 ```
 
 ---
@@ -167,8 +170,17 @@ measurement. The within-phase results are sound (each was measured on one
 suite in one sitting); the cross-phase line is not evidence yet.
 
 **Fix: freeze the suite, then produce all five rows in one sitting.**
-`ConditionB` takes `enabled_modules`, so each row is one command. Do not do
-this before the coverage expansion (§5.2) or it will need redoing.
+`ConditionB` takes `enabled_modules`, so each row is one command. The coverage
+expansion (§5.2) is now done, so this is unblocked — but budget it properly,
+see §5.2a: it is roughly **8 hours of wall clock** at 39 cases, bound by the
+2 requests/minute rate limit rather than the daily cap.
+
+**The Condition A baseline no longer exists for the pinned backbone.** It was
+overwritten twice by narrowed runs (see the bug table) and the surviving file
+covers only the 13 banking/travel cases; it is now correctly named
+`phase1_condition_a_qwen-qwen3.8-27b_banking-travel.json`. `ablation_table`'s
+EVIDENCE panel prints the source file for every row, so this is visible rather
+than implied. Regenerating it is the first step of the frozen-suite run.
 
 ### 5.2 Coverage — scenario columns DONE, per-category depth still thin
 

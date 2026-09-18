@@ -327,3 +327,186 @@ class TestCasesDoNotReimplementRefusal:
             "these cases re-implement refusal detection; declare "
             f"expects.should_refuse instead: {offenders}"
         )
+
+
+# ---------------------------------------------------------------------------
+# A narrowed run must not clobber a broader one's evidence
+# ---------------------------------------------------------------------------
+
+
+class TestResultFilesCarryTheirScope:
+    """This has now destroyed a baseline twice.
+
+    The filename carried the backbone but not the filter, so
+    `--suite injection` overwrote the full Condition A baseline (recorded in
+    HANDOFF 5.1), and then `--scenario banking --scenario travel` overwrote it
+    again - turning the cumulative ablation's first row into 13 banking/travel
+    cases while it was still labelled "Condition A (no defenses)".
+
+    Nothing errors when this happens. The table just quietly reports a
+    different denominator under the same name, which is the exact class of
+    defect this repo treats as worse than a crash.
+    """
+
+    def _report(self, cases, condition="A"):
+        from src.eval.schemas import RunResult, SuiteReport, Outcome
+
+        results = [
+            RunResult(
+                test_case_id=c.id, condition=condition, run_index=0,
+                backbone_model="qwen/qwen3.8-27b", transcript=[],
+                timestamp="2026-09-18T00:00:00Z", suite=c.suite,
+                scenario=c.scenario,
+                outcome=Outcome(refused=False, task_completed=True,
+                                latency_ms=1, num_llm_calls=1),
+            )
+            for c in cases
+        ]
+        return SuiteReport(
+            condition=condition, suites=sorted({c.suite for c in cases}),
+            results=results, generated_at="2026-09-18T00:00:00Z",
+            backbone_model="qwen/qwen3.8-27b",
+        )
+
+    def test_a_full_run_keeps_the_plain_name(self):
+        from src.eval.runner import default_report_name
+
+        cases = load_suites(settings.TESTSUITES_DIR)
+        name = default_report_name(self._report(cases), phase="phase1")
+        assert name == "phase1_condition_a_qwen-qwen3.8-27b.json"
+
+    def test_a_scenario_narrowed_run_gets_its_own_name(self):
+        from src.eval.runner import default_report_name
+
+        cases = [c for c in load_suites(settings.TESTSUITES_DIR)
+                 if c.scenario in {"banking", "travel"}]
+        name = default_report_name(self._report(cases), phase="phase1")
+        assert name != "phase1_condition_a_qwen-qwen3.8-27b.json"
+        assert "banking" in name and "travel" in name
+
+    def test_a_suite_narrowed_run_gets_its_own_name(self):
+        from src.eval.runner import default_report_name
+
+        cases = [c for c in load_suites(settings.TESTSUITES_DIR)
+                 if c.suite == "injection"]
+        name = default_report_name(self._report(cases), phase="phase1")
+        assert "injection" in name
+        assert name != "phase1_condition_a_qwen-qwen3.8-27b.json"
+
+    def test_two_different_scopes_never_collide(self):
+        from src.eval.runner import default_report_name
+
+        cases = load_suites(settings.TESTSUITES_DIR)
+        full = default_report_name(self._report(cases), phase="phase1")
+        banking = default_report_name(
+            self._report([c for c in cases if c.scenario == "banking"]),
+            phase="phase1",
+        )
+        injection = default_report_name(
+            self._report([c for c in cases if c.suite == "injection"]),
+            phase="phase1",
+        )
+        assert len({full, banking, injection}) == 3
+
+
+class TestAblationTablePicksEvidenceVisibly:
+    """The table globbed `phase1_condition_a_*.json` and took the last match
+    alphabetically - so a scoped file could become the "Condition A (no
+    defenses)" row purely by sorting late, with nothing on screen saying which
+    file the row came from."""
+
+    def _module(self):
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "ablation_table_mod", Path("demos/ablation_table.py")
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_the_broadest_file_wins_not_the_last_alphabetically(self, tmp_path):
+        import json
+
+        def write(name, n):
+            # The pinned backbone: this test is about breadth, and a foreign
+            # model is now filtered out entirely (see TestAblationTableIsSingleBackbone).
+            (tmp_path / name).write_text(json.dumps({
+                "condition": "A", "suites": ["direct_harm"], "generated_at": "x",
+                "backbone_model": settings.BACKBONE_MODEL,
+                "results": [
+                    {"test_case_id": f"c{i}", "condition": "A", "run_index": 0,
+                     "backbone_model": settings.BACKBONE_MODEL, "transcript": [],
+                     "timestamp": "x", "passed": True,
+                     "outcome": {"refused": False, "task_completed": True,
+                                 "latency_ms": 1, "num_llm_calls": 1}}
+                    for i in range(n)
+                ],
+            }), encoding="utf-8")
+
+        write("phase1_condition_a_pinned.json", 26)
+        write("phase1_condition_a_pinned_zzz-narrow.json", 3)
+
+        module = self._module()
+        data, source = module.load("phase1_condition_a_*.json", root=tmp_path)
+        assert len(data["results"]) == 26
+        assert source == "phase1_condition_a_pinned.json"
+
+    def test_a_missing_snapshot_reports_no_source(self, tmp_path):
+        module = self._module()
+        assert module.load("nothing_*.json", root=tmp_path) == (None, "")
+
+
+class TestAblationTableIsSingleBackbone:
+    """HANDOFF 3: the backbone is pinned, and a result from another model is
+    not comparable with one from the pinned model.
+
+    Making the evidence visible exposed that the Condition A row had been
+    built from `phase1_condition_a_gemini-2.5-flash.json` - a different
+    backbone - while the other four rows were all qwen. The row reported
+    ASR_inj 1.00 and HS 0.40 next to four qwen rows reporting 0.00, and
+    nothing said the top row was a different model.
+    """
+
+    def _module(self):
+        import importlib.util
+        from pathlib import Path
+
+        spec = importlib.util.spec_from_file_location(
+            "ablation_table_mod2", Path("demos/ablation_table.py")
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def _write(self, tmp_path, name, model, n):
+        import json
+
+        (tmp_path / name).write_text(json.dumps({
+            "condition": "A", "suites": ["direct_harm"], "generated_at": "x",
+            "backbone_model": model,
+            "results": [
+                {"test_case_id": f"c{i}", "condition": "A", "run_index": 0,
+                 "backbone_model": model, "transcript": [], "timestamp": "x",
+                 "passed": True,
+                 "outcome": {"refused": False, "task_completed": True,
+                             "latency_ms": 1, "num_llm_calls": 1}}
+                for i in range(n)
+            ],
+        }), encoding="utf-8")
+
+    def test_a_foreign_backbone_is_not_used_even_if_broader(self, tmp_path):
+        self._write(tmp_path, "phase1_condition_a_other.json", "google/gemini", 30)
+        self._write(tmp_path, "phase1_condition_a_pinned.json", settings.BACKBONE_MODEL, 5)
+
+        module = self._module()
+        data, source = module.load("phase1_condition_a_*.json", root=tmp_path)
+        assert source == "phase1_condition_a_pinned.json"
+        assert len(data["results"]) == 5
+
+    def test_no_pinned_snapshot_means_no_row(self, tmp_path):
+        self._write(tmp_path, "phase1_condition_a_other.json", "google/gemini", 30)
+
+        module = self._module()
+        assert self._module().load("phase1_condition_a_*.json", root=tmp_path) == (None, "")
