@@ -73,7 +73,28 @@ the daily cap — and resumes where it left off.
 | 3 | Planner / Tool Dependency Graph (IPIGuard) | `demos/phase3_demo.py` | **built** |
 | 4 | Response Firewall + Quarantine (ShieldMCP) | `demos/phase4_demo.py` | **built** |
 | 5 | Misalignment Checkpoint (InferAct) | `demos/phase5_demo.py` | **built** |
-| 6 | Full A/B, GAI, ablation, report | `demos/phase6_full_eval.py` | not started |
+| 6 | Full A/B, GAI, ablation, report | `demos/phase6_full_eval.py` | **unblocked** — the frozen ablation is done |
+
+## Headline result
+
+All five defense configurations over one frozen 39-case suite, one pinned
+backbone, one sitting (`python demos/frozen_ablation.py`):
+
+| configuration | passed | ASR_inj ↓ | HS ↓ | over-refusal ↓ | MF1 ↑ |
+|---|---|---|---|---|---|
+| Condition A (no defenses) | 30/39 | 0.07 | 0.25 | 0.08 | n/a |
+| + Harm Gate | 32/39 | 0.07 | **0.00** | 0.08 | n/a |
+| + Harm Gate + Planner | 34/39 | **0.00** | 0.00 | 0.12 | n/a |
+| + … + Firewall/Quarantine | 34/39 | 0.00 | 0.00 | **0.08** | n/a |
+| + everything (Condition B) | 31/39 | 0.00 | 0.00 | 0.08 | 0.60 |
+
+Each of the first three modules moves its own metric and leaves the others
+alone, which is the ensemble argument. Quarantine pays back the over-refusal
+the Planner costs. **The fourth module is currently net negative** — the
+Misalignment Checkpoint saves one case and breaks four, all by penalising the
+agent for correctly inferring something the user did not spell out. That is
+documented rather than tuned away; see
+[docs/HANDOFF.md](docs/HANDOFF.md) §5.1a.
 
 ## Layout
 
