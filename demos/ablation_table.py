@@ -40,12 +40,22 @@ from src.eval.scorer import misalignment_macro_f1  # noqa: E402
 RULE = "=" * 84
 
 # Configuration order, matching the phase in which each module was added.
+# Each row names the frozen-suite file FIRST and the per-phase snapshot as a
+# fallback. `demos/frozen_ablation.py` writes the frozen set - all five rows
+# over one case set in one sitting - which is the only version of this table
+# that can honestly be read as a trend. Until it has been run, the phase
+# snapshots still render, and the comparability gate below still refuses.
 SNAPSHOTS = [
-    ("Condition A (no defenses)", "phase1_condition_a_*.json"),
-    ("+ Harm Gate", "ablation_phase2.json"),
-    ("+ Harm Gate + Planner", "ablation_phase3.json"),
-    ("+ Harm Gate + Planner + Firewall/Quarantine", "ablation_phase4.json"),
-    ("+ everything (Condition B)", "ablation_phase5.json"),
+    ("Condition A (no defenses)",
+     ["frozen_1_condition_a.json", "phase1_condition_a_*.json"]),
+    ("+ Harm Gate",
+     ["frozen_2_harm_gate.json", "ablation_phase2.json"]),
+    ("+ Harm Gate + Planner",
+     ["frozen_3_planner.json", "ablation_phase3.json"]),
+    ("+ Harm Gate + Planner + Firewall/Quarantine",
+     ["frozen_4_firewall.json", "ablation_phase4.json"]),
+    ("+ everything (Condition B)",
+     ["frozen_5_everything.json", "ablation_phase5.json"]),
 ]
 
 
@@ -159,8 +169,12 @@ def main() -> int:
 
     loaded: list[tuple[str, dict, set[str]]] = []
     sources: dict[str, str] = {}
-    for label, pattern in SNAPSHOTS:
-        data, source = load(pattern)
+    for label, patterns in SNAPSHOTS:
+        data, source = None, ""
+        for pattern in patterns:
+            data, source = load(pattern)
+            if data is not None:
+                break
         if data is None:
             continue
         rows = {
