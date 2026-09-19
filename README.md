@@ -14,15 +14,19 @@ source papers are in [docs/papers/](docs/papers/).
 
 ## Setup
 
+**[docs/REPRODUCING.md](docs/REPRODUCING.md) is the full guide** — what to
+install, which key you need, what each command costs, and what will go wrong.
+The short version:
+
 ```bash
 pip install -r requirements.txt
+cp .env.example .env        # then paste a free Groq key into it
+python -m pytest            # 446 tests, no network, no key needed
 ```
 
-Then copy `.env.example` to `.env` and paste an OpenRouter API key into it:
-
-```
-OPENROUTER_API_KEY=sk-or-v1-...
-```
+One free [Groq key](https://console.groq.com/keys) is the only requirement.
+The pinned backbone and both auxiliary safety models run on it. OpenRouter and
+Gemini keys are optional fallbacks.
 
 `.env` is gitignored, and a value there takes precedence over anything exported
 in the shell — so a stale exported key cannot silently shadow a good one.
@@ -52,8 +56,12 @@ the workspace tools - which is both what makes a per-surface number mean
 something and what keeps the response cache valid as surfaces are added.
 
 ```bash
-python -m pytest
+python demos/frozen_ablation.py --dry-run
 ```
+
+Estimates the cost of the full benchmark without spending anything. The real
+run takes ~4 hours of wall clock — bound by Groq's 2 requests/minute, not by
+the daily cap — and resumes where it left off.
 
 ## Build status
 
