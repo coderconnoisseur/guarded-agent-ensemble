@@ -48,7 +48,7 @@ for _stream in (sys.stdout, sys.stderr):
     if hasattr(_stream, "reconfigure"):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
-from scripts.fetch_agentharm import is_fetched, load_cached  # noqa: E402
+from src.eval.agentharm import dev_set, heldout_set, is_fetched, load  # noqa: E402
 from src.defense.harm_gate import HarmGate  # noqa: E402
 from src.eval.stats import fisher_exact_one_sided, format_rate  # noqa: E402
 from src.llm.client import LLMClient  # noqa: E402
@@ -61,11 +61,25 @@ def banner(title: str) -> None:
 
 
 def evaluate(gate: HarmGate, rows: list[dict]) -> list[tuple[dict, bool, str]]:
-    """(behaviour, flagged, stage) for each prompt."""
+    """(behaviour, flagged, what-decided) for each prompt.
+
+    `verdict.stage` says "clean" both when the rubric declined to escalate and
+    when the classifier ran and judged the request benign. Those are very
+    different facts - the first means nothing looked, the second means
+    something looked and cleared it - and reporting them under one label made
+    a panel read as though half the prompts had never been escalated. So this
+    keys off whether a call was actually spent.
+    """
     out = []
     for row in rows:
         verdict = gate.check(row["prompt"])
-        out.append((row, verdict.flagged, verdict.stage))
+        if verdict.stage == "rubric":
+            decided = "rubric (blocked, 0 calls)"
+        elif verdict.llm_calls:
+            decided = f"classifier ({'harmful' if verdict.flagged else 'benign'})"
+        else:
+            decided = "no escalation (rubric silent, stage 2 off)"
+        out.append((row, verdict.flagged, decided))
     return out
 
 
@@ -75,6 +89,11 @@ def main() -> int:
                         help="Enable stage 2. Costs one request per escalation.")
     parser.add_argument("--limit", type=int,
                         help="Only the first N behaviours per class.")
+    parser.add_argument("--split", choices=("heldout", "dev", "all"),
+                        default="heldout",
+                        help="heldout (default) is the half no tuning has "
+                             "seen - the only split a reported number may "
+                             "come from. dev is for iterating.")
     parser.add_argument("--verbose", "-v", action="store_true")
     args = parser.parse_args()
 
@@ -85,8 +104,12 @@ def main() -> int:
         print("Run:  python scripts/fetch_agentharm.py")
         return 1
 
-    harmful = load_cached("harmful")
-    benign = load_cached("benign")
+    if args.split == "heldout":
+        harmful, benign = heldout_set("harmful"), heldout_set("benign")
+    elif args.split == "dev":
+        harmful, benign = dev_set("harmful"), dev_set("benign")
+    else:
+        harmful, benign = load("harmful"), load("benign")
     if args.limit:
         harmful, benign = harmful[:args.limit], benign[:args.limit]
 
@@ -94,8 +117,9 @@ def main() -> int:
         gate = HarmGate(client=client, enable_classifier=args.classifier)
 
         banner("HARM GATE vs AgentHarm (gate-level, NOT the GAI's HS)")
-        print(f"  Behaviours : {len(harmful)} harmful, {len(benign)} benign "
-              f"counterparts")
+        print(f"  Split      : {args.split}"
+              + ("  (no tuning has seen these)" if args.split == "heldout" else "  <- TUNING SET, do not report"))
+        print(f"  Behaviours : {len(harmful)} harmful, {len(benign)} benign counterparts")
         print(f"  Stage 2    : {'ON (costs requests)' if args.classifier else 'OFF - zero LLM calls'}")
         print("  These prompts call AgentHarm's own tools and are NOT executable")
         print("  in our sandbox. This measures the intake classifier only.")

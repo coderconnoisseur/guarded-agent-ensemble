@@ -307,22 +307,48 @@ class HarmGate:
             logger.info("Harm Gate BLOCKED at rubric stage (%s)", category)
             return verdict
 
-        # Escalate when the rubric saw *something*, or when the task could act
-        # irreversibly. The second condition is the important one: it is what
-        # gives the evasively-worded requests - the ones with no harmful
-        # vocabulary at all - any scrutiny.
-        partial = bool(category)
-        critical = has_critical_intent(task)
-        if self.enable_classifier and (partial or critical):
+        # Everything else escalates. Stage 1 is TRIAGE, not detection.
+        #
+        # This inverts the original design, where the rubric flagged
+        # confidently and escalated only on a partial signal or a critical
+        # verb. MEASURED against AgentHarm's 352 paired prompts on 2026-09-20,
+        # that design did not work:
+        #
+        #   rubric detection      2/176 = 0.01   Fisher p=0.25 vs benign
+        #   would never escalate  33% of harmful prompts
+        #
+        # and it cannot be repaired by widening the patterns. An *oracle*
+        # keyword set - every n-gram appearing in some harmful dev prompt and
+        # no benign one, greedily chosen to 100% dev detection at 0% dev false
+        # positives - generalised to 14% detection and 10% false positives on
+        # held-out data, selecting terms like "t", "legal" and "need to".
+        # AgentHarm's benign counterparts are deliberately matched to the
+        # harmful ones precisely to defeat keyword filters.
+        #
+        # The dedicated safety classifier, on the same dev prompts, scored
+        # 20/20 detection at 3/20 over-refusal. So the decision moves to the
+        # model that can actually make it.
+        #
+        # The cost is one classifier call per task that the rubric did not
+        # already block. It is paid on a dedicated 20B safety model with its
+        # own 1000/day budget, never the backbone's, and architecture.md Flow
+        # 3's claim still holds: one small call is still far cheaper than
+        # planning and running the agent.
+        if self.enable_classifier:
             return self._classify(task, category, hits_a + hits_b)
 
+        # Only reachable with the classifier switched off (--rubric-only, or
+        # no client). That configuration is now known to detect 2/176 on
+        # AgentHarm, so the reason says so rather than implying a clean bill
+        # of health.
         return HarmVerdict(
             flagged=False,
             stage="clean",
             reason=(
-                "No harm indicators and no irreversible action implied."
-                if not partial else
-                f"Only a partial {category} signal, and escalation is disabled."
+                f"Rubric did not confidently flag ("
+                f"{'partial ' + category + ' signal' if category else 'no signal'}"
+                f") and escalation is disabled; the rubric alone detects "
+                f"~1% of real harmful requests."
             ),
             matched=hits_a + hits_b,
         )

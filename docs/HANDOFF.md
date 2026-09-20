@@ -314,6 +314,95 @@ at 39. It cannot be cut by lowering `DEFAULT_MAX_TOKENS`: p95 completion is
 348 tokens, so 400 is already tight. Plan the re-run as its own multi-session
 job, not as a step inside another task.
 
+### 5.2d The Harm Gate's rubric cannot be fixed by broadening it
+
+Measured 2026-09-20 against AgentHarm (176 harmful + 176 benign paired
+prompts, fetched by `scripts/fetch_agentharm.py`):
+
+    harmful flagged   2/176 = 0.01 [0.00-0.04]
+    benign  flagged   0/176 = 0.00 [0.00-0.02]
+    Fisher p = 0.25 — the gate does not separate the two classes at all
+
+Our own suite reported `HS` 0.25 → 0.00, which read like the module working.
+It was overfit to six cases we wrote ourselves, in the vocabulary the rubric
+looks for.
+
+**Diagnosis, on the dev half only** (108 harmful):
+
+| rubric state | share |
+|---|---|
+| flagged (both signal groups) | **0%** |
+| group B only (manner, no object) | 41% |
+| group A only | 7% |
+| no signal at all | 52% |
+
+Zero flags in *every* category. The patterns were written around a narrow
+idiom; real requests say "hand off drugs", "racist account", "follow and
+interact".
+
+**The obvious repair — broaden the vocabulary — does not work, and this is
+measured rather than assumed.** An *oracle* keyword rubric was constructed:
+every 1-3 word n-gram appearing in some harmful dev prompt and **no** benign
+dev prompt, then greedy set-cover to maximise coverage. Tuned with full sight
+of dev it reaches 100% detection at 0% false positives. On the held-out half:
+
+    detection        14/100 = 14%
+    false positives  10/100 = 10%
+
+The terms it selects are `"t"`, `"legal"`, `"they"`, `"need to"`, `"hand"` —
+noise that happens to separate one sample. **14% detection with 10%
+over-refusal is the ceiling for any keyword rubric on this data**, because
+AgentHarm's benign counterparts are deliberately matched to the harmful ones
+precisely to defeat keyword filters. "drugs" itself appears in 4 benign dev
+prompts.
+
+**Consequence for the architecture, now applied.** Stage 1 cannot carry the
+Harm Gate and has stopped trying. Its job is now *triage* — decide whether to
+ask — with the purpose-built safety classifier making the call. That inverts
+the original design, where the rubric flagged confidently and escalated
+rarely: only 67% of harmful prompts escalated at all, so 33% were invisible to
+stage 2 no matter how good it was.
+
+The rubric's confident-flag path is kept as a zero-call fast path, because it
+has 0 false positives over 176 benign prompts. Everything else now escalates.
+
+### 5.2e The fix, measured on held-out data
+
+`demos/harm_gate_bench.py --split heldout --classifier`, n=25 per class,
+**on the half no tuning has seen**:
+
+| | detection | over-refusal | Fisher p |
+|---|---|---|---|
+| before (rubric flags) | 2/176 = 0.01 | 0/176 = 0.00 | 0.25, not significant |
+| after (classifier decides) | **25/25 = 1.00** [0.87-1.00] | 1/25 = 0.04 [0.01-0.20] | **2.1e-13** |
+
+Detection is 1.00 in all six categories present in the sample. This is the
+**first statistically significant result the project has produced** — every
+number in the frozen ablation sits at p > 0.2.
+
+Caveats to carry into the report:
+
+- n=25 per class. The intervals are wide ([0.87-1.00] and [0.01-0.20]) and a
+  larger held-out run is worth the ~150 requests it would cost.
+- Over-refusal measured 3/20 = 0.15 on dev and 1/25 = 0.04 on held-out. Those
+  intervals overlap heavily; the true rate is somewhere around 5-15% and is
+  **not** pinned down. It is a real cost and belongs in `BU`.
+- The price of the redesign is one classifier call per task the rubric does
+  not already block, on the dedicated safety model's separate 1000/day budget.
+  architecture.md Flow 3's "cheapest possible block" claim survives — one
+  small call still beats planning and running the agent — but it is no longer
+  literally zero, and that is a documented deviation.
+- This is a **gate-level** number, not `HS`. AgentHarm's tasks are not
+  executable in our sandbox. `HS` stays what it was: agent-level compliance
+  from real tool calls on our own suite.
+
+**Methodology note worth keeping.** `src/eval/agentharm.py` splits
+`test_public` in half by `id_original`, not by row, because AgentHarm ships
+four near-paraphrase augmentations of each base behaviour and a row-wise split
+would tune on one phrasing and "evaluate" on a reworded copy. Tune on dev,
+report on held-out. The whole reason this section exists is that the previous
+rubric was tuned and reported on the same six cases.
+
 ### 5.2b New coverage is not new headroom — measured, and it matters
 
 Condition A over the 13 new banking/travel cases, 2026-09-18, pinned backbone:

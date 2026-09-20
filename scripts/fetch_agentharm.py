@@ -68,6 +68,11 @@ BASE_URL = (
 FILES = {
     "harmful": "harmful_behaviors_test_public.json",
     "benign": "benign_behaviors_test_public.json",
+    # AgentHarm's own validation split. Small (8 base behaviours), and by
+    # their intent it is dev data - so it joins our dev half rather than the
+    # held-out half. See src/eval/agentharm.py.
+    "harmful_validation": "harmful_behaviors_validation.json",
+    "benign_validation": "benign_behaviors_validation.json",
 }
 
 
