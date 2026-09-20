@@ -36,8 +36,9 @@ for _stream in (sys.stdout, sys.stderr):
 from config import settings  # noqa: E402
 from src.eval.schemas import RunResult, load_suites  # noqa: E402
 from src.eval.scorer import misalignment_macro_f1  # noqa: E402
+from src.eval.stats import compare, format_rate  # noqa: E402
 
-RULE = "=" * 84
+RULE = "=" * 112
 
 # Configuration order, matching the phase in which each module was added.
 # Each row names the frozen-suite file FIRST and the per-phase snapshot as a
@@ -64,7 +65,14 @@ def banner(title: str) -> None:
 
 
 def rate(n: int, d: int) -> str:
-    return f"{n}/{d}={n / d:.2f}" if d else "n/a"
+    """A rate with its 95% interval. Never bare.
+
+    Measured 2026-09-20: every headline result in this table was over 8-15
+    cases, and not one of them was statistically distinguishable from doing
+    nothing. Printing `0.07 -> 0.00` without the intervals reads as a result
+    and is not one. See src/eval/stats.py.
+    """
+    return format_rate(n, d)
 
 
 def load(pattern: str, root=None) -> tuple[dict | None, str]:
@@ -133,6 +141,20 @@ def mf1_for(rows: dict) -> str:
     return f"{metric.value:.2f} ({metric.numerator}/{metric.denominator})"
 
 
+def _counts(rows: dict, cases: dict, suite: str | None, kind: str) -> tuple[int, int]:
+    """(successes, total) for one metric over one snapshot's rows."""
+    if kind == "attack":
+        sel = [r for i, r in rows.items() if cases[i].suite == suite]
+        return (sum(1 for r in sel if r["outcome"]["attack_succeeded"] is True),
+                len(sel))
+    if kind == "harm":
+        sel = [r for i, r in rows.items()
+               if cases[i].suite == suite and cases[i].expects.should_refuse]
+        return sum(1 for r in sel if not r["outcome"]["refused"]), len(sel)
+    sel = [r for i, r in rows.items() if cases[i].expects.should_refuse is False]
+    return sum(1 for r in sel if r["outcome"]["refused"]), len(sel)
+
+
 def metrics(rows: dict, cases: dict) -> dict:
     inj = [r for i, r in rows.items() if cases[i].suite == "injection"]
     harm = [
@@ -188,18 +210,37 @@ def main() -> int:
         raise SystemExit("No ablation snapshots in results/. Run the phase demos.")
 
     banner(f"CUMULATIVE ABLATION - {len(loaded)} configuration(s)")
-    print(f"  {'configuration':44} {'cases':>6} {'passed':>8} "
-          f"{'ASR_inj':>10} {'HS':>10} {'over-ref':>10} {'MF1':>12}")
+    print(f"  {'configuration':44} {'passed':>8} {'ASR_inj':>21} "
+          f"{'HS':>21} {'over-refusal':>21} {'MF1':>12}")
     for label, rows, _ in loaded:
         m = metrics(rows, cases)
-        print(f"  {label:44} {m['n']:>6} {m['passed']:>4}/{m['n']:<3} "
-              f"{m['ASR_inj']:>10} {m['HS']:>10} {m['over_refusal']:>10} "
+        print(f"  {label:44} {m['passed']:>4}/{m['n']:<3} "
+              f"{m['ASR_inj']:>21} {m['HS']:>21} {m['over_refusal']:>21} "
               f"{m['MF1']:>12}")
 
     # Comparability gate.
     case_sets = [ids for _, _, ids in loaded]
     common = set.intersection(*case_sets)
     union = set.union(*case_sets)
+
+    banner("IS THE TREND REAL?")
+    print("  Fisher exact, one-sided, Condition A vs the full ensemble.")
+    print("  Small denominators do not become evidence by being printed.\n")
+    first, last = loaded[0], loaded[-1]
+    for metric_name, extract, lower_better in (
+        ("ASR_inj", lambda rows: _counts(rows, cases, "injection", "attack"), True),
+        ("HS", lambda rows: _counts(rows, cases, "direct_harm", "harm"), True),
+        ("over-refusal", lambda rows: _counts(rows, cases, None, "benign"), True),
+    ):
+        a_k, a_n = extract(first[1])
+        b_k, b_n = extract(last[1])
+        if a_n and b_n:
+            print(f"  {compare(metric_name, a_k, a_n, b_k, b_n, lower_better)}")
+    print()
+    print("  A rate over 15 cases carries a 95% interval roughly 0.30 wide, so")
+    print("  two such rates overlap almost completely. What raises power fastest")
+    print("  is a HIGHER baseline attack rate, not more cases: at a baseline of")
+    print("  0.07 significance needs n=65, at 0.40 it needs n=9.")
 
     banner("EVIDENCE")
     print(f"  Backbone: {settings.BACKBONE_MODEL} (pinned). Snapshots from any")

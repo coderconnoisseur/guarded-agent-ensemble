@@ -27,6 +27,7 @@ import statistics
 from dataclasses import dataclass, field
 
 from src.eval.schemas import RunResult
+from src.eval.stats import wilson_interval
 
 logger = logging.getLogger(__name__)
 
@@ -46,10 +47,28 @@ class MetricValue:
     def defined(self) -> bool:
         return self.value is not None
 
+    @property
+    def interval(self) -> tuple[float, float] | None:
+        """95% Wilson interval, where the metric is a rate over cases.
+
+        None for MF1, which is a macro-F1 rather than a proportion - a
+        binomial interval around it would be arithmetic, not evidence.
+        """
+        if self.denominator <= 0 or self.name == "MF1":
+            return None
+        return wilson_interval(self.numerator, self.denominator)
+
     def render(self) -> str:
         if not self.defined:
             return f"{self.name}: n/a ({self.note})"
         text = f"{self.name}: {self.value:.2f} ({self.numerator}/{self.denominator})"
+        # The interval is not decoration. Every headline rate this project has
+        # reported so far was over 8-15 cases, where a 95% interval is ~0.30
+        # wide - so a bare point estimate invites a reader to believe a
+        # difference the data does not carry. See src/eval/stats.py.
+        bounds = self.interval
+        if bounds is not None:
+            text += f" [95% CI {bounds[0]:.2f}-{bounds[1]:.2f}]"
         if self.excluded_provider_filtered:
             text += f" [{self.excluded_provider_filtered} provider-filtered excluded]"
         return text
