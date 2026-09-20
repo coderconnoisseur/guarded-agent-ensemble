@@ -396,14 +396,29 @@ def load_cases(
     limit: int | None = None,
     root: Path | None = None,
     scenarios: list[str] | None = None,
+    include_generated: bool = False,
 ) -> list[TestCase]:
     """Load test cases, optionally narrowed to some suites, surfaces, a count.
 
     `scenarios` selects the columns of the IPIGuard Table 1-style grid, the
     way `suites` selects the attack type - which is what makes a per-surface
     rate runnable as one command.
+
+    `include_generated` folds in the factored cases from `*.spec.json`
+    (src/eval/generator.py). **Off by default, deliberately.** Every result in
+    results/ was measured over the hand-written suite; silently adding 30 more
+    cases would change every denominator at once, which is precisely the
+    incomparability `ablation_table.py` refuses to draw a trend through.
     """
-    cases = load_suites(root or settings.TESTSUITES_DIR, suites)
+    from src.eval.generator import load_generated_cases
+
+    root = root or settings.TESTSUITES_DIR
+    cases = load_suites(root, suites)
+    if include_generated:
+        generated = load_generated_cases(root)
+        if suites:
+            generated = [c for c in generated if c.suite in set(suites)]
+        cases = sorted(cases + generated, key=lambda c: c.id)
     if scenarios:
         wanted = set(scenarios)
         cases = [c for c in cases if c.scenario in wanted]

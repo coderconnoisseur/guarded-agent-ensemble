@@ -362,8 +362,18 @@ class SuiteReport(BaseModel):
 
 
 def load_suite(directory: Path) -> list[TestCase]:
-    """Load and validate every test case in a suite directory, sorted by id."""
-    cases = [TestCase.from_file(p) for p in sorted(directory.glob("*.json"))]
+    """Load and validate every test case in a suite directory, sorted by id.
+
+    `*.spec.json` files are skipped: those are generator specs for
+    `src/eval/generator.py`, which live alongside the cases they expand into
+    but are not themselves cases. Without this the loader parses one as a
+    TestCase and the entire suite fails to load.
+    """
+    cases = [
+        TestCase.from_file(p)
+        for p in sorted(directory.glob("*.json"))
+        if not p.name.endswith(".spec.json")
+    ]
     return sorted(cases, key=lambda c: c.id)
 
 

@@ -25,3 +25,9 @@ __pycache__/
 .venv/
 venv/
 .pytest_cache/
+
+# Third-party benchmark data, fetched on demand by scripts/fetch_agentharm.py.
+# AgentHarm ships a canary GUID to detect its prompts leaking into training
+# corpora; copying 352 harmful prompts into a public repo is what that canary
+# exists to discourage. Licence permits it, the commons does not.
+external/

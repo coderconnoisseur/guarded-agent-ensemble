@@ -90,6 +90,14 @@ def main() -> int:
     parser.add_argument("--suite", action="append", dest="suites",
                         help="Limit to a suite (repeatable).")
     parser.add_argument("--limit", type=int, help="Run at most N cases.")
+    parser.add_argument("--include-generated", action="store_true",
+                        help="Include factored cases from *.spec.json. Off by "
+                             "default: every saved result was measured without "
+                             "them, so folding them in changes every "
+                             "denominator at once.")
+    parser.add_argument("--only-generated", action="store_true",
+                        help="ONLY the generated cases - for measuring whether "
+                             "a new attack corpus raises the baseline rate.")
     parser.add_argument("--scenario", action="append", dest="scenarios",
                         help="Only cases on this tool surface (workspace, "
                              "banking, travel). Repeatable.")
@@ -118,8 +126,12 @@ def main() -> int:
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
-    cases = runner.load_cases(suites=args.suites, limit=args.limit,
-                              scenarios=args.scenarios)
+    cases = runner.load_cases(
+        suites=args.suites, limit=args.limit, scenarios=args.scenarios,
+        include_generated=args.include_generated or args.only_generated,
+    )
+    if args.only_generated:
+        cases = [c for c in cases if c.id.startswith("gen_")]
     if not cases:
         print("No test cases matched. (The diversity suite is empty by design - "
               "see src/eval/testsuites/diversity/README.md.)")
