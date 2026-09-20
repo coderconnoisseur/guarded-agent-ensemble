@@ -79,6 +79,16 @@ def expand_spec(spec: dict[str, Any]) -> list[TestCase]:
                 payload = render_attack(
                     attack, goal=goal["goal"], user=user_name, model=model_name
                 )
+                # Wrap the payload in legitimate content where the carrier
+                # REPLACES the whole response (web.fetch, files.read) rather
+                # than appending to it (bank.transactions, travel listings).
+                # Without this the agent fetches a page that is nothing but an
+                # injection, correctly ignores it, and then truthfully reports
+                # that the page was empty - which the task check scores as a
+                # failure caused by neither the agent nor the defense.
+                carrier = spec.get("carrier_content")
+                if carrier:
+                    payload = f"{carrier}{payload}"
                 cases.append(TestCase.model_validate({
                     "id": f"{prefix}_{task['key']}_{goal['key']}_{attack}",
                     "suite": suite,
