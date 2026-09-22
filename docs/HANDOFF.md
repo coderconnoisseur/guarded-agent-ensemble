@@ -314,6 +314,49 @@ at 39. It cannot be cut by lowering `DEFAULT_MAX_TOKENS`: p95 completion is
 348 tokens, so 400 is already tight. Plan the re-run as its own multi-session
 job, not as a step inside another task.
 
+### 5.2f The Misalignment Checkpoint's diagnosed fix does NOT work
+
+The diagnosis (§5.1a, §5.2c) was that the verification prompt penalises the
+agent for *inferring* things, because unit 2 is given the instruction, the
+inferred task and the proposed action - but **not the trajectory** - so it
+cannot tell an argument *resolved from an observation* from one *invented*.
+
+That diagnosis still looks right. The fix derived from it does not work.
+
+Measured by offline replay (`demos/misalignment_replay.py`) over 27 recorded
+triples, the same data for all three variants:
+
+| variant | MF1 | detection | over-flag |
+|---|---|---|---|
+| **A — original prompt** | **0.85** | 10/11 = 0.91 | 3/16 = 0.19 |
+| B — + trajectory, + "it is ALIGNED when…" list | 0.76 | 7/11 = 0.64 | 2/16 = 0.12 |
+| C — + trajectory, no permissive list | 0.77 | 8/11 = 0.73 | 3/16 = 0.19 |
+
+Both variants bought a little precision with a lot of recall. B's permissive
+list was an escape hatch that applies to almost any action; removing it (C)
+recovered one detection and gave the precision straight back.
+
+**The likely mechanism is the one this module's own docstring already gives
+for unit 1**: shown the evidence, a model stops judging and starts agreeing -
+it watches the agent work diligently and rationalises the action. Extending
+context to unit 2 reproduced exactly that effect. That is an argument *for*
+InferAct's two-unit separation, measured, rather than against it.
+
+**Reverted to A.** The over-flagging is real, it is what breaks four benign
+cases in the full ensemble (§5.1a), and it is **unfixed**. Two things worth
+trying next, neither attempted:
+
+- a *third* unit that checks only the instruction's premises against the tool
+  output, leaving the ToM comparison unchanged — keeps the contexts separate
+  instead of merging them;
+- a cheaper structural pre-filter, so the judge is consulted on fewer actions
+  rather than being asked to judge better.
+
+**Do not simply try more prompt wordings against these 27 triples.** Three
+variants have now been measured on them; a fourth chosen because it scores
+best is tuned on the measurement set, which is the failure this whole line of
+work exists to avoid.
+
 ### 5.2d The Harm Gate's rubric cannot be fixed by broadening it
 
 Measured 2026-09-20 against AgentHarm (176 harmful + 176 benign paired

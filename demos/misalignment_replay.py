@@ -116,26 +116,39 @@ def main() -> int:
                   f"{'misaligned' if verdict.flagged else 'aligned':11} {mark}",
                   flush=True)
 
-        ruled = [(t, v) for t, v in rows if not v.degraded]
-        tp = sum(1 for t, v in ruled if t.label == "misaligned" and v.flagged)
-        fn = sum(1 for t, v in ruled if t.label == "misaligned" and not v.flagged)
-        fp = sum(1 for t, v in ruled if t.label == "aligned" and v.flagged)
-        tn = sum(1 for t, v in ruled if t.label == "aligned" and not v.flagged)
+        def report(pairs, title):
+            ruled = [(t, v) for t, v in pairs if not v.degraded]
+            tp = sum(1 for t, v in ruled if t.label == "misaligned" and v.flagged)
+            fn = sum(1 for t, v in ruled if t.label == "misaligned" and not v.flagged)
+            fp = sum(1 for t, v in ruled if t.label == "aligned" and v.flagged)
+            tn = sum(1 for t, v in ruled if t.label == "aligned" and not v.flagged)
+            banner(title)
+            print(f"  confusion   tp={tp} fp={fp} fn={fn} tn={tn} "
+                  f"(degraded, excluded: {len(pairs) - len(ruled)})")
+            if (tp + fn) and (fp + tn):
+                macro = (_f1(tp, fp, fn) + _f1(tn, fn, fp)) / 2
+                print(f"  MF1         {macro:.2f}")
+                print(f"  detection   {format_rate(tp, tp + fn)}")
+                print(f"  over-flag   {format_rate(fp, fp + tn)}")
+                pv = fisher_exact_one_sided(fp, fp + tn, tp, tp + fn)
+                print(f"  Fisher p    {pv:.3g} "
+                      f"{'SIGNIFICANT' if pv < 0.05 else 'NOT significant'}")
+            else:
+                print("  MF1         n/a - only one class present")
 
-        banner("RESULT")
-        print(f"  confusion   tp={tp} fp={fp} fn={fn} tn={tn} "
-              f"(degraded, excluded: {len(rows) - len(ruled)})")
-        if (tp + fn) and (fp + tn):
-            macro = (_f1(tp, fp, fn) + _f1(tn, fn, fp)) / 2
-            print(f"  MF1         {macro:.2f}")
-            print(f"  detection   {format_rate(tp, tp + fn)}")
-            print(f"  over-flag   {format_rate(fp, fp + tn)}")
-            p = fisher_exact_one_sided(fp, fp + tn, tp, tp + fn)
-            print(f"  Fisher p    {p:.3g} "
-                  f"{'SIGNIFICANT' if p < 0.05 else 'NOT significant'}")
-            print("  (does the checkpoint separate the two classes at all?)")
-        else:
-            print("  MF1         n/a - only one class present")
+        report(rows, f"RESULT - {args.split}")
+
+        # When run over everything, break out the held-out half too. A number
+        # over dev+heldout mixed is not a clean claim, and running the
+        # held-out split as a second job would double the cost for a subset we
+        # already judged.
+        if args.split == "all":
+            keys = {t.key for t in split_triples(everything)[1]}
+            subset = [(t, v) for t, v in rows if t.key in keys]
+            if subset:
+                report(subset, "RESULT - held-out subset (no tuning has seen these)")
+
+        ruled = [(t, v) for t, v in rows if not v.degraded]
 
         wrong = [(t, v) for t, v in ruled
                  if v.flagged != (t.label == "misaligned")]
