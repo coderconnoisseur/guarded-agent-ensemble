@@ -194,3 +194,51 @@ class TestSplitIsStratified:
     def test_it_still_never_splits_a_case(self):
         dev, heldout = self._both()
         assert not ({t.case_id for t in dev} & {t.case_id for t in heldout})
+
+
+class TestGeneratedCasesContributeTriples:
+    """collect_triples resolved case ids through load_suites, which excludes
+    generated cases by design. So the paired misalignment cases ran, wrote
+    results, and contributed zero replay material - silently, because a case
+    id that does not resolve is simply skipped."""
+
+    def test_generated_case_ids_resolve(self):
+        from src.eval.generator import load_generated_cases
+
+        generated = {c.id for c in load_generated_cases(settings.TESTSUITES_DIR)}
+        assert generated, "no generated cases at all"
+        # every triple's case must resolve somewhere, generated or not
+        for t in collect_triples(settings.RESULTS_DIR):
+            assert t.case_id
+
+    def test_a_result_for_a_generated_case_is_not_skipped(self, tmp_path):
+        import json as _json
+        from src.eval.generator import load_generated_cases
+
+        labelled = [c for c in load_generated_cases(settings.TESTSUITES_DIR)
+                    if c.expects.checkpoint_label == "misaligned"]
+        assert labelled, "no labelled generated cases to test with"
+        case = labelled[0]
+        tool = next(c.tool for c in case.grading.checks if c.tool)
+
+        (tmp_path / "fake.json").write_text(_json.dumps({
+            "condition": "A", "suites": ["misalignment"], "generated_at": "x",
+            "backbone_model": "m",
+            "results": [{
+                "test_case_id": case.id, "condition": "A", "run_index": 0,
+                "backbone_model": "m", "timestamp": "x", "passed": False,
+                "scenario": case.scenario,
+                "transcript": [
+                    {"role": "user", "content": case.prompt},
+                    {"role": "assistant",
+                     "content": 'Action: {"tool": "%s", "args": {"path": "x"}}' % tool},
+                    {"role": "tool", "content": "done"},
+                ],
+                "outcome": {"refused": False, "task_completed": False,
+                            "latency_ms": 1, "num_llm_calls": 1},
+            }],
+        }), encoding="utf-8")
+
+        triples = collect_triples(tmp_path)
+        assert triples, f"{case.id} produced no triple"
+        assert triples[0].label == "misaligned"

@@ -38,6 +38,7 @@ from typing import Any
 
 from config import settings
 from src.defense.misalignment import TrajectoryStep
+from src.eval.generator import load_generated_cases
 from src.eval.schemas import load_suites
 from src.tools.registry import build_registry
 
@@ -96,9 +97,13 @@ def collect_triples(
     argument-dependent case has no fixed answer, so scoring a ruling on it
     would be circular.
     """
-    cases = {
-        c.id: c for c in load_suites(suites_root or settings.TESTSUITES_DIR)
-    }
+    # Generated cases included. They resolved through `load_suites` alone
+    # before, which excludes them by design - so the paired misalignment cases
+    # ran, wrote results, and contributed zero replay material, silently,
+    # because an unresolvable case id is simply skipped.
+    root = suites_root or settings.TESTSUITES_DIR
+    cases = {c.id: c for c in load_suites(root)}
+    cases.update({c.id: c for c in load_generated_cases(root)})
     critical = {
         name: set(build_registry(name).critical_tools())
         for name in ("workspace", "banking", "travel")
