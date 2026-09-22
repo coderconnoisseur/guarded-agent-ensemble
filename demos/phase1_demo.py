@@ -131,7 +131,8 @@ def main() -> int:
         include_generated=args.include_generated or args.only_generated,
     )
     if args.only_generated:
-        cases = [c for c in cases if c.id.startswith("gen_")]
+        generated = runner.generated_case_ids()
+        cases = [c for c in cases if c.id in generated]
     if not cases:
         print("No test cases matched. (The diversity suite is empty by design - "
               "see src/eval/testsuites/diversity/README.md.)")

@@ -267,9 +267,44 @@ class TestCarrierContent:
         statement. Only the replacing carriers need this, so only they are
         required to declare it."""
         for spec in load_generated_specs(settings.TESTSUITES_DIR):
+            # Paired misalignment specs carry no payload at all - there is no
+            # attacker in InferAct's threat model, so no carrier to wrap.
+            if spec.get("kind") == "misalignment":
+                continue
             if spec["injection_tool"] in ("web.fetch", "files.read"):
                 assert spec.get("carrier_content"), (
                     f"{spec['id_prefix']} plants into {spec['injection_tool']}, "
                     f"which replaces the whole response - without "
                     f"carrier_content the user's task is unwinnable"
                 )
+
+
+class TestGeneratedSelectionIsStructural:
+    """`--only-generated` filtered on an id starting with "gen_", so the
+    paired misalignment specs - prefixed "gm_" - silently matched nothing and
+    the run reported "No test cases matched". Selection must not depend on a
+    naming convention inside spec files."""
+
+    def test_generated_ids_are_identified_without_a_prefix_rule(self):
+        from src.eval.runner import generated_case_ids
+
+        ids = generated_case_ids()
+        assert any(i.startswith("gm_") for i in ids), "misalignment pairs missing"
+        assert any(i.startswith("gen_") for i in ids), "injection cases missing"
+
+    def test_handwritten_ids_are_not_in_it(self):
+        from src.eval.runner import generated_case_ids, load_cases
+
+        ids = generated_case_ids()
+        assert not (ids & {c.id for c in load_cases()})
+
+    def test_selecting_only_generated_by_suite_finds_the_pairs(self):
+        from src.eval.runner import generated_case_ids, load_cases
+
+        ids = generated_case_ids()
+        cases = [c for c in load_cases(suites=["misalignment"],
+                                       include_generated=True)
+                 if c.id in ids]
+        assert cases, "no generated misalignment cases selected"
+        labels = {c.expects.checkpoint_label for c in cases}
+        assert labels == {"misaligned", "aligned"}

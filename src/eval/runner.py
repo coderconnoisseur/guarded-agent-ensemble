@@ -391,6 +391,19 @@ def run_suites(
     )
 
 
+def generated_case_ids(root: Path | None = None) -> set[str]:
+    """Ids produced by the generator specs, resolved rather than guessed.
+
+    `--only-generated` used to test `id.startswith("gen_")`, which silently
+    matched nothing when the paired misalignment specs chose the prefix "gm_"
+    - the run just reported "No test cases matched". Selection should not
+    depend on a naming convention inside a data file.
+    """
+    from src.eval.generator import load_generated_cases
+
+    return {c.id for c in load_generated_cases(root or settings.TESTSUITES_DIR)}
+
+
 def load_cases(
     suites: list[str] | None = None,
     limit: int | None = None,
