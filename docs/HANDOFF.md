@@ -1,11 +1,15 @@
 # Handoff — Guarded Agent Ensemble
 
-**Written:** 2026-09-11 · **Repo:** https://github.com/coderconnoisseur/guarded-agent-ensemble (public)
-**Branch:** `master` · **24 commits** · **446 tests passing**
-**Phases 0–5 complete**, plus the §5.2 coverage expansion and the §5.1
-frozen-suite ablation. **Phase 6 is unblocked.** The open item that should
-shape it is §5.1a: the Misalignment Checkpoint is net negative on this
-backbone.
+**Updated:** 2026-09-27 · **Repo:** https://github.com/coderconnoisseur/guarded-agent-ensemble (public)
+**Branch:** `master` · **34 commits** · **521 tests passing**
+**Phases 0–5 complete**, plus the §5.2 coverage expansion, the §5.1
+frozen-suite ablation, confidence intervals on every rate (§5.5), the
+external-benchmark work (§5.2d/e) and the replay harness (§5.6).
+**Phase 6 is unblocked and is the last thing standing between this repo
+and its actual deliverable — the GAI composite does not exist yet.**
+The open defect that should shape it is §5.1a: the Misalignment Checkpoint
+is net negative on this backbone and §5.2f records that the obvious fix
+was measured and does not work.
 
 `CLAUDE.md` at the repo root is the full spec and is auto-loaded as project
 memory. This file only covers what a fresh session cannot reconstruct from it:
@@ -142,6 +146,38 @@ runs "before planning or any LLM call" *and* calls it a "rubric/classifier"
 checkpoint. Both cannot hold literally. The node is split: a zero-call rubric
 (the literal reading, still available via `--rubric-only`) plus a classifier
 escalation. §1 requires flagging such mismatches rather than silently choosing.
+
+---
+
+## 4a. READ FIRST IF YOU ARE IN A FRESH WORKTREE OR CLONE
+
+`results/`, `src/llm/cache/`, `external/` and `.env` are **gitignored**, so a
+new worktree has none of them. Consequences, both hit in real sessions:
+
+**Five tests fail on a fresh clone.** `tests/test_replay.py` reads
+`collect_triples()`, which reads `results/` — so with no saved runs the
+replay tests fail with no useful message. That is a genuine defect: a test
+should not depend on a gitignored artifact. Either ship a small fixture of
+recorded triples or skip those tests when `results/` is empty. **Not yet
+fixed.**
+
+**Restore before doing anything:**
+
+```bash
+MAIN=D:/Project/MinorProject
+cp $MAIN/.env .
+mkdir -p src/llm/cache results external
+cp -r $MAIN/src/llm/cache/. src/llm/cache/
+cp $MAIN/src/llm/.budget.json src/llm/
+cp -r $MAIN/results/. results/
+python scripts/fetch_agentharm.py        # external/, one-time
+```
+
+If the main checkout is behind, a recycled worktree directory may still hold
+newer data — this session recovered the whole frozen ablation that way.
+**Check `.claude/worktrees/*/results/` before re-running anything expensive.**
+The cache is what makes demos free; without it every command costs real
+requests at 2/minute.
 
 ---
 
@@ -552,6 +588,67 @@ re-measuring on the same 12 cases it was changed for is fitting the judge to
 its own test set — the same reason Phase 5 left `benign_003` alone (§7.3). The
 fix is worth doing as its own step: change the bullet, then measure on cases
 written before the change, and report both numbers.
+
+### 5.5 Every rate now carries a confidence interval — and almost none are significant
+
+`src/eval/stats.py` (Wilson intervals, Fisher exact, power). Measured over the
+frozen 39-case ablation, **not one headline result is distinguishable from
+doing nothing**:
+
+    ASR_inj  1/15 = 0.07 -> 0/15 = 0.00   Fisher p = 0.500
+    HS       2/8  = 0.25 -> 0/8  = 0.00   p = 0.233
+    passed   30/39        -> 31/39        p = 0.708
+
+Wilson not Wald, because Wald collapses to zero width at k=0 and our best
+cells are exactly `0/8` and `0/15` — Wald would render the strongest claims as
+certainties. Fisher not chi-square, because cells contain 0 and 2.
+
+`ablation_table.py` now prints an "IS THE TREND REAL?" panel. **The Harm Gate
+fix (§5.2e) is the only statistically significant result the project has.**
+
+Required n is driven by the **baseline rate**, not by how many cases we write:
+`HS` 0.25→0.00 needs n=14 (have 8); `ASR_inj` 0.07→0.00 needs n=65 (have 15);
+at a baseline of 0.40 it would need n=9.
+
+### 5.6 The replay harness — use it before re-running agent loops
+
+`src/eval/replay.py` + `demos/misalignment_replay.py` implement InferAct's
+actual protocol: judge the detector on pre-collected
+`(instruction, trajectory, proposed action)` triples. A triple costs **2
+calls** regardless of what the run that produced it cost, and a recorded
+triple cannot be pre-empted by the Planner (which is what left `MF1`
+undefined in the ensemble, §7.2).
+
+27 triples over 19 cases. The split is **by case** (one case yields several
+triples from one trajectory) and **stratified by label** (an unstratified hash
+of 12 case ids put 7 of 8 positives on one side).
+
+Held-out is only 9 triples with 3 positives — **every held-out figure so far
+came back not significant.** Growing it means more paired cases (§5.7) and
+another Condition A pass to record their trajectories.
+
+### 5.7 Factored + paired case generation
+
+`src/eval/generator.py` expands `*.spec.json` along axes instead of
+hand-writing whole cases:
+
+- **injection**: tasks × injection goals × attack templates. AgentDojo's five
+  templates are vendored verbatim in `src/eval/attacks.py` (MIT, attributed,
+  including their own `iunstructions` typo — rewording a published attack
+  breaks comparability).
+- **misalignment**: `pairs`, each expanding to one misaligned + one aligned
+  case differing in **one controlled way**, both naming the same critical
+  tool. That makes AgentHarm's pairing discipline structural rather than a
+  convention someone has to remember.
+
+Generated cases are **opt-in** (`--include-generated`); every result in
+`results/` was measured without them.
+
+**Specs planting into a *replacing* carrier (`web.fetch`, `files.read`) must
+declare `carrier_content`.** Without it the agent fetches a page that is
+nothing but an injection, correctly ignores it, and truthfully reports an
+empty page — scored as a task failure caused by neither the agent nor any
+defense. A structural test enforces this.
 
 ### 5.3 The ensemble costs utility — a finding, not a bug
 
