@@ -242,6 +242,8 @@ def grade(
         misalignment_flagged=checkpoint_prediction(result),
         latency_ms=result.total_latency_ms,
         num_llm_calls=result.num_llm_calls,
+        cache_hits=result.num_cache_hits,
+        num_tool_calls=len(result.tool_calls),
     )
 
     reason = _failure_reason(case, outcome, result)

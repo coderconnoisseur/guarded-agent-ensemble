@@ -91,6 +91,17 @@ class LLMResponse(BaseModel):
     content: str
     model_used: str
     latency_ms: int
+    # Of `latency_ms`, how much was spent blocked in the rate limiter rather
+    # than waiting on the provider. The limiter sleeps inside the timed
+    # region, and at GROQ_RATE_LIMIT_PER_MINUTE = 2 that sleep is ~30s - two
+    # orders of magnitude larger than the call it is pacing.
+    #
+    # Phase 6's LAT is "added latency per tool call" (ShieldMCP). Without
+    # this split it measures the free tier's queue: Condition B makes ~4x as
+    # many LLM calls as Condition A, so it waits ~4x as long, and LAT would
+    # report the rate limiter while the report claimed it was reporting the
+    # defenses. See scorer.added_latency.
+    queued_ms: int = 0
     from_cache: bool
     raw: dict[str, Any] = Field(default_factory=dict)
     provider: str = ""
@@ -324,6 +335,9 @@ class LLMClient:
         self.cache_enabled = (
             settings.CACHE_ENABLED if cache_enabled is None else cache_enabled
         )
+        # Total time slept in a rate limiter, in ms, across every caller.
+        # See LLMResponse.queued_ms for why this is tracked separately.
+        self.queued_ms_total = 0
         self.cache = DiskCache(settings.LLM_CACHE_DIR)
 
         self.limiters: dict[str, RateLimiter] = {}
@@ -438,7 +452,8 @@ class LLMClient:
         )
 
     def _post_with_retries(
-        self, provider: Provider, model: str, body: dict[str, Any]
+        self, provider: Provider, model: str, body: dict[str, Any],
+        queued: list[float] | None = None,
     ) -> dict[str, Any]:
         """POST one completion, retrying 429/5xx. Raises on give-up.
 
@@ -446,6 +461,11 @@ class LLMClient:
         RateLimitExhaustedError and BudgetExceededError are provider-wide, so
         the caller skips that whole backend; a plain LLMError means this model
         is broken and the caller moves to the next entry.
+
+        `queued` collects the seconds spent asleep in the rate limiter, which
+        the caller subtracts out of the measured latency. It is a list rather
+        than a return value because this method already returns the payload
+        and the retry loop may sleep more than once.
         """
         name = provider.name
         url = provider.base_url + provider.endpoint(model)
@@ -454,7 +474,15 @@ class LLMClient:
         last_error = ""
 
         for attempt in range(settings.MAX_RETRIES):
-            self.limiters[name].acquire()
+            slept = self.limiters[name].acquire()
+            # Accumulated here rather than at the call site so a sleep that
+            # is followed by an error - a budget stop, or a model failure
+            # that falls through to the next backend - is still counted.
+            # Missing those would under-report queueing on exactly the runs
+            # that queued the longest.
+            self.queued_ms_total += int(slept * 1000)
+            if queued is not None:
+                queued.append(slept)
             budget.check()
             try:
                 response = self._client.post(url, headers=headers, json=body)
@@ -624,9 +652,10 @@ class LLMClient:
 
             backend = self.providers[provider_name]
             body = backend.build_body(candidate, messages, params)
+            queued: list[float] = []
             started = time.perf_counter()
             try:
-                payload = self._post_with_retries(backend, candidate, body)
+                payload = self._post_with_retries(backend, candidate, body, queued)
             except (BudgetExceededError, RateLimitExhaustedError) as exc:
                 if isinstance(exc, BudgetExceededError):
                     budget_failures += 1
@@ -652,6 +681,7 @@ class LLMClient:
                 continue
 
             latency_ms = int((time.perf_counter() - started) * 1000)
+            queued_ms = int(sum(queued) * 1000)
             try:
                 content = backend.extract_content(payload)
             except ValueError as exc:
@@ -672,6 +702,7 @@ class LLMClient:
                 content=content,
                 model_used=backend.model_reported(payload, candidate),
                 latency_ms=latency_ms,
+                queued_ms=queued_ms,
                 from_cache=False,
                 raw=payload,
                 provider=provider_name,

@@ -73,9 +73,26 @@ the daily cap — and resumes where it left off.
 | 3 | Planner / Tool Dependency Graph (IPIGuard) | `demos/phase3_demo.py` | **built** |
 | 4 | Response Firewall + Quarantine (ShieldMCP) | `demos/phase4_demo.py` | **built** |
 | 5 | Misalignment Checkpoint (InferAct) | `demos/phase5_demo.py` | **built** |
-| 6 | Full A/B, GAI, ablation, report | `demos/phase6_full_eval.py` | **unblocked** — the frozen ablation is done |
+| 6 | Full A/B, GAI, ablation, report | `demos/phase6_full_eval.py` | **built** — `results/report.md` |
 
 ## Headline result
+
+**The full ensemble does not improve the composite index on this backbone.**
+Under the Guarded Agent Index (CLAUDE.md §9), over the same 39 cases:
+
+| weight vector | GAI, Condition A | GAI, Condition B | change |
+|---|---|---|---|
+| security-leaning (default) | 0.915 | 0.917 | +0.001 |
+| utility-leaning | 0.953 | 0.867 | −0.087 |
+| equal-weighted | 0.921 | 0.900 | −0.021 |
+
+Flat under the default, negative under the other two, and every interval
+overlaps. Two reasons, both measured: Condition A starts at `ASR_inj` 0.07
+and `UA` 1.00, so there is almost no headroom; and the cost is concentrated
+in one module — the composite peaks two modules in and falls. The per-module
+breakdown is below, and the whole argument is in
+[`results/report.md`](results/report.md) (rebuild it for free with
+`python demos/phase6_full_eval.py`).
 
 All five defense configurations over one frozen 39-case suite, one pinned
 backbone, one sitting (`python demos/frozen_ablation.py`):

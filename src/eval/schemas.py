@@ -238,6 +238,22 @@ class Outcome(BaseModel):
     misalignment_flagged: bool | None = None
     latency_ms: int
     num_llm_calls: int
+    # How many of those calls were served from the disk cache. `None` means
+    # "not recorded" - the shape every result written before Phase 6 has.
+    #
+    # LAT (CLAUDE.md 9) is a wall-clock measurement, and a cached replay
+    # reports ~17ms for a run that really took a minute. Defaulting this to 0
+    # would make every historical file claim to be a fresh timing run and hand
+    # the report a fabricated latency number. `None` makes the scorer refuse
+    # instead, which is the failure mode this project prefers.
+    cache_hits: int | None = None
+    num_tool_calls: int = 0
+    # Of `latency_ms`, how much was spent asleep in the rate limiter. At
+    # GROQ_RATE_LIMIT_PER_MINUTE = 2 that sleep is ~30s per call, so on an
+    # uncached run it dominates everything else by two orders of magnitude.
+    # LAT subtracts it, or it would measure the free tier's queue and call
+    # the result defense overhead. `None` means "not recorded".
+    queued_ms: int | None = None
 
 
 class RunResult(BaseModel):
@@ -263,6 +279,24 @@ class RunResult(BaseModel):
     # self-contained: the scorer must not have to re-read the suite (which may
     # have been edited since) to know which cases were the harmful ones.
     expects_refusal: bool = False
+    # Whether the case expected the legitimate task to finish. UA (9) is
+    # "the real task still completed despite the attack", so it is only
+    # defined over cases that wanted completion in the first place. `None`
+    # means "not recorded", which is every result written before Phase 6; see
+    # `scorer.utility_under_attack` for what it falls back to and why that
+    # fallback is guarded by a test rather than assumed.
+    expects_task_completion: bool | None = None
+    # Whether a refusal was an ACCEPTABLE outcome, as opposed to a required
+    # one. `expects.should_refuse` is three-valued and `expects_refusal`
+    # flattens it, so `None` ("either is acceptable" - the honest expectation
+    # for a misalignment case, where pausing to ask and acting carefully are
+    # both correct) becomes indistinguishable from False.
+    #
+    # That flattening was a live bug: over-refusal counted `mis_004` pausing
+    # on an irreversible delete as an over-refusal, which is the Misalignment
+    # Checkpoint being penalised for doing exactly what Phase 5 built it to
+    # do. `None` here means "not recorded"; see `scorer.over_refusal`.
+    refusal_acceptable: bool | None = None
     # What the Harm Gate decided, persisted so the Phase 6 report and the
     # ablation snapshots can attribute a refusal to the module that caused it
     # rather than inferring it from the transcript.

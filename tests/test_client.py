@@ -380,3 +380,73 @@ class TestRetries:
         with pytest.raises(LLMError):
             client.chat([{"role": "user", "content": "x"}])
         assert set(seen) == {"a"}, "should never have tried model b"
+
+
+class TestQueueAccounting:
+    """Phase 6: rate-limiter sleep must be separable from provider latency.
+
+    LAT is "added latency per tool call" (ShieldMCP). The limiter sleeps
+    inside the timed region, and at 2 requests/minute that sleep is ~30s
+    against a call that takes well under a second - so without this split LAT
+    measures the free tier's queue while the report claims it is measuring
+    the defenses. See scorer.added_latency.
+    """
+
+    def test_a_call_that_did_not_wait_reports_no_queueing(self, isolated):
+        client = make_client(lambda r: httpx.Response(200, json=completion("hi")))
+        assert client.chat([{"role": "user", "content": "x"}]).queued_ms == 0
+
+    def test_queued_time_is_reported(self, isolated, monkeypatch):
+        clock = {"t": 1000.0}
+        # Deliberately NOT patching time.perf_counter. `src.llm.client.time`
+        # IS the stdlib time module, so setattr here is global - and pytest
+        # measures its own session duration with perf_counter, so patching it
+        # made the suite report an 11-hour run. monotonic is already patched
+        # this way by TestRateLimiter above and is not read by pytest.
+        monkeypatch.setattr("src.llm.client.time.monotonic", lambda: clock["t"])
+        monkeypatch.setattr(
+            "src.llm.client.time.sleep",
+            lambda seconds: clock.__setitem__("t", clock["t"] + seconds),
+        )
+        client = make_client(lambda r: httpx.Response(200, json=completion("hi")))
+        for limiter in client.limiters.values():
+            limiter.per_minute = 1
+
+        client.chat([{"role": "user", "content": "one"}])
+        second = client.chat([{"role": "user", "content": "two"}], force_refresh=True)
+
+        assert second.queued_ms > 0, "the second call should have queued"
+        # Queued time is a *component* of latency, not an addition to it -
+        # the limiter sleeps inside the timed region. That relationship is
+        # not asserted here because forcing it under a fake clock means
+        # patching perf_counter globally (see above). Its consequence is
+        # covered instead: scorer.added_latency subtracts queued from latency
+        # and clamps at zero, tested in tests/test_gai.py.
+        assert second.queued_ms == pytest.approx(60_000, abs=100)
+
+    def test_the_client_accumulates_queueing_across_callers(
+        self, isolated, monkeypatch
+    ):
+        """The runner snapshots this around a whole case, because the Harm
+        Gate, Planner and ToM judge call chat() directly rather than through
+        the agent loop."""
+        clock = {"t": 1000.0}
+        # Deliberately NOT patching time.perf_counter. `src.llm.client.time`
+        # IS the stdlib time module, so setattr here is global - and pytest
+        # measures its own session duration with perf_counter, so patching it
+        # made the suite report an 11-hour run. monotonic is already patched
+        # this way by TestRateLimiter above and is not read by pytest.
+        monkeypatch.setattr("src.llm.client.time.monotonic", lambda: clock["t"])
+        monkeypatch.setattr(
+            "src.llm.client.time.sleep",
+            lambda seconds: clock.__setitem__("t", clock["t"] + seconds),
+        )
+        client = make_client(lambda r: httpx.Response(200, json=completion("hi")))
+        for limiter in client.limiters.values():
+            limiter.per_minute = 1
+
+        assert client.queued_ms_total == 0
+        client.chat([{"role": "user", "content": "one"}])
+        after_first = client.queued_ms_total
+        client.chat([{"role": "user", "content": "two"}], force_refresh=True)
+        assert client.queued_ms_total > after_first

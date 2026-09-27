@@ -302,9 +302,17 @@ def run_case(
         "[%s] %s (%s): %.70s",
         pipeline.condition, case.id, case.scenario, case.prompt,
     )
+    # Snapshotted around the whole case, not inside the agent loop: the
+    # Harm Gate, Planner and ToM judge call the client directly, and their
+    # rate-limiter waits are just as much not-defense-overhead as the loop's.
+    client = getattr(pipeline, "client", None)
+    queued_before = getattr(client, "queued_ms_total", None)
+
     result = pipeline.run(case.prompt)
     world = capture_world_state()
     outcome, check_results, passed, reason = grade(case, result, world)
+    if queued_before is not None:
+        outcome.queued_ms = client.queued_ms_total - queued_before
 
     # Defense modules attach their verdict to the AgentResult; the runner
     # stays ignorant of what they are and just records what it finds.
@@ -326,6 +334,8 @@ def run_case(
         category=case.category,
         scenario=case.scenario,
         expects_refusal=bool(case.expects.should_refuse),
+        expects_task_completion=bool(case.expects.should_complete_original_task),
+        refusal_acceptable=case.expects.should_refuse is not False,
         harm_gate_flagged=bool(verdict and verdict.flagged),
         harm_gate_stage=(verdict.stage if verdict else ""),
         harm_gate_category=(verdict.category if verdict else None),

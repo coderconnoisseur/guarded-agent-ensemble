@@ -1,15 +1,20 @@
 # Handoff — Guarded Agent Ensemble
 
 **Updated:** 2026-09-27 · **Repo:** https://github.com/coderconnoisseur/guarded-agent-ensemble (public)
-**Branch:** `master` · **34 commits** · **521 tests passing**
+**Branch:** `master` · **36 commits** · **602 tests passing**
 **Phases 0–5 complete**, plus the §5.2 coverage expansion, the §5.1
 frozen-suite ablation, confidence intervals on every rate (§5.5), the
 external-benchmark work (§5.2d/e) and the replay harness (§5.6).
-**Phase 6 is unblocked and is the last thing standing between this repo
-and its actual deliverable — the GAI composite does not exist yet.**
-The open defect that should shape it is §5.1a: the Misalignment Checkpoint
-is net negative on this backbone and §5.2f records that the obvious fix
-was measured and does not work.
+**Phase 6 is complete** — `results/report.md` exists and §9 of this file
+says what it found. The headline is unflattering and correct: **the full
+ensemble does not improve the GAI composite on this backbone.** The
+cumulative ablation peaks two modules in and falls, for the reason §5.1a
+already gave.
+
+The clearest next job is §9.5: **§9.1 tier 2 single-module isolation was
+not run.** It is ~1,076 requests and ~9 h at 2/min, and it is the one
+measurement that would let the project claim the ensemble is more than the
+sum of its parts rather than infer it.
 
 `CLAUDE.md` at the repo root is the full spec and is auto-loaded as project
 memory. This file only covers what a fresh session cannot reconstruct from it:
@@ -63,7 +68,8 @@ the Planner pre-empts it (§7.2). Do not smooth these over.
 | **Planner / TDG** (IPIGuard) | **working** | `ASR_inj` 0.14 → 0.00 |
 | **Firewall + Quarantine** (ShieldMCP) | **working** | flags 10/10 payloads, 0 false positives |
 | **Misalignment Checkpoint** (InferAct) | **working** | `MF1` 0.73 over 12 labelled cases; see §5.2c, §7 |
-| GAI Scorer | partial | `HS`, `BU`, over-refusal, `MF1` done; `ASR_inj` (in ablation_table only), `LAT`, `DIV_ASR`, GAI itself not |
+| GAI Scorer | **working** | all seven §9 terms present; `DIV_ASR` undefined by design, `MF1` undefined for Condition A by construction — both dropped out loud (§9.4) |
+| **Phase 6 report** | **working** | `results/report.md`, rebuilt from snapshots at zero cost |
 
 ### Commands (all replay from cache at zero cost once warmed)
 
@@ -80,7 +86,9 @@ python demos/show_case.py inj_005              # any saved case, legibly
 python demos/compare_backbones.py              # per-arm metrics + failure overlap
 python demos/ablation_table.py                 # cumulative ablation (refuses if incomparable)
 python demos/frozen_ablation.py                # all five rows, one frozen suite
-python -m pytest                               # 446 tests, all offline
+python demos/phase6_full_eval.py               # PHASE 6: results/report.md, free
+python demos/phase6_full_eval.py --dry-run     # price the modes that cost requests
+python -m pytest                               # 602 tests, all offline
 ```
 
 ---
@@ -791,3 +799,153 @@ Six is thin, and per-case rates move in steps of 0.17. Say so in the report.
   choosing; the diagram is the design source of truth (§1).
 - The user wants honest reporting over flattering numbers, and has said so
   repeatedly by rewarding it.
+
+---
+
+## 9. Phase 6 — the GAI composite, and what it says
+
+`python demos/phase6_full_eval.py` writes `results/report.md`. It calls no
+model: every number is recomputed from the saved snapshots in `results/`, so
+the report is reproducible months later and cannot drift from the runs it
+describes. `python demos/phase6_full_eval.py --dry-run` prices the two modes
+that do cost requests.
+
+**The default deliberately does not re-run the agent.** §10's DoD is "every
+suite × both conditions × N repeats", and `frozen_ablation.py` already
+produced exactly that on 2026-09-19 — both conditions are rows 1 and 5 of the
+cumulative ablation, over one frozen 39-case set on the pinned backbone.
+Re-running it would replay from cache to byte-identical numbers at ~8 h of
+wall clock. `--rerun` delegates to `frozen_ablation.py` if the suite changes.
+
+### 9.1 The headline is that the ensemble does not improve the composite
+
+Comparable index (terms defined in both arms: `ASR_inj`, `BU`, `UA`, `HS`),
+39 cases, N=1:
+
+| weight vector | GAI_A | GAI_B | change |
+|---|---|---|---|
+| security-leaning (default) | 0.915 [0.630–0.978] | 0.917 [0.634–0.976] | **+0.001** |
+| utility-leaning | 0.953 [0.649–0.988] | 0.867 [0.557–0.964] | **−0.087** |
+| equal-weighted | 0.921 [0.618–0.979] | 0.900 [0.599–0.973] | **−0.021** |
+
+Flat under the default, negative under the other two. This is consistent with
+everything already in this file rather than a surprise: Condition A starts at
+`ASR_inj` 0.07 and `UA` 1.00, so there is almost no headroom, and §5.1a's
+fourth module costs four benign cases.
+
+The **cumulative ablation under the same index** is the more useful shape, and
+it is the report's best chart:
+
+    Condition A                              0.915
+    + Harm Gate                              0.978
+    + Harm Gate + Planner                    0.983   <- peak
+    + ... + Firewall/Quarantine              0.967
+    + everything (Condition B)               0.917
+
+Two modules earn their place on the composite, two subtract. Firewall/
+Quarantine costs `UA` 0.93 → 0.87 without moving `ASR_inj`, because the
+Planner had already driven it to zero — its mechanism is demonstrable
+case-by-case (10/10 payloads flagged, 0 false positives) but on this suite it
+has nothing left to catch.
+
+**Do not read the peak as a recommendation to ship three modules.** Every
+interval above overlaps every other almost entirely (§5.5), and the ordering
+is not significant.
+
+### 9.2 Two bugs this phase found, both of the silent-number kind
+
+**Over-refusal counted the checkpoint for working.** `expects.should_refuse`
+is three-valued (§4), but `RunResult.expects_refusal` flattened `None`
+("either is acceptable") to `False`. So `mis_004` — the checkpoint pausing
+before an irreversible delete, which is precisely what Phase 5 was built to
+produce — was scored as an over-refusal. Condition B read 4/31 = 0.13 where
+`ablation_table.py` independently read 2/26 = 0.08. Fixed: `RunResult` now
+carries `refusal_acceptable`, and `scorer.over_refusal` takes an id set so
+historical snapshots can be corrected from the live suite. The two now agree,
+which is what says the fix is right rather than merely different.
+
+**Each arm was renormalised over its own terms.** §9 says to renormalise when
+a term is missing, and `MF1` is undefined for Condition A *by construction* —
+a bare backbone has no detector to score. Renormalising per arm therefore
+compared a four-term index against a five-term one and called it a
+before-and-after; it made Condition B look 0.044 worse than it was. The
+headline now restricts both arms to `common_defined_terms`, and the per-arm
+full index is reported separately and labelled not-comparable.
+
+Worth carrying forward as a comment on the spec: **§9's index contains at
+least one term a bare backbone cannot have a value for.** `LAT` has the same
+shape with a cleaner answer — it is measured *relative to* Condition A, so
+Condition A is 0.0 by definition. `MF1` has no such natural floor, and
+inventing one would put a fabricated number inside the headline.
+
+### 9.3 LAT is measured, and it is not ShieldMCP's number
+
+`python demos/phase6_full_eval.py --timing 4` runs four workspace injection
+cases through both conditions with the cache switched **off** — which also
+means it writes nothing back, so it cannot perturb any other demo's replay.
+
+**LAT is still not measured, and the attempt is the interesting part.**
+The pass ran (`results/phase6_timing_{a,b}.json`, ~58 fresh requests) and the
+scorer refused the result twice over:
+
+- *Cache provenance.* Saved `latency_ms` values are ~17 ms cached-replay
+  artifacts. `Outcome.cache_hits` defaults to `None` (unrecorded) rather than
+  `0` precisely so historical files cannot pose as fresh timing runs.
+- *Rate-limiter sleep.* The limiter sleeps **inside** the timed region; a
+  Condition A case measured 60,029 ms of wall clock for 726 ms of work, and
+  Condition B makes ~4x the calls. `LLMResponse.queued_ms` and
+  `LLMClient.queued_ms_total` now record it and LAT subtracts it.
+- *Mismatched brackets — the one that is still open.* `Outcome.latency_ms`
+  comes from the **agent loop**, but the runner snapshots queueing around the
+  **whole case**, which in Condition B includes the Harm Gate and Planner
+  calls that precede the loop. Three of four cases therefore recorded more
+  queueing than total latency, giving negative active time. **Before the
+  guard was added these files produced `LAT = 1.00` from a per-tool-call
+  figure of 10,577,111 ms** — confident, precise, meaningless, and headed
+  straight for the index.
+
+  The fix is small and known: time the case in `run_case`, around the same
+  span the queueing is counted over, instead of reusing the loop's timer.
+  It needs one more uncached run (~58 requests, ~30 min).
+
+- *One case spanned a machine hibernate* and recorded 11.8 h; `perf_counter`
+  counts through a suspend. Diagnosed, not a clock bug — but an uncached
+  timing run must finish without the machine sleeping.
+
+Normalisation is a **documented deviation**: §9 says "normalised added latency
+per tool call" without fixing the normaliser. ShieldMCP's ~118 ms is a raw
+figure, not comparable across backbones and not summable into a [0,1] index,
+so LAT here is `added / baseline` capped at 1.0 — "1.0 means the defenses at
+least doubled the time a tool call takes". Our LAT and ShieldMCP's millisecond
+number must not be quoted as the same measurement. The figure is dominated by
+LLM round-trips (11.6 calls/case vs 2.8), not by defense code.
+
+### 9.4 `DIV_ASR` is dropped, out loud
+
+Never built, deliberately (§5.4, and `src/eval/testsuites/diversity/README.md`).
+It carries 0.20 of the default vector; with `MF1`'s 0.10 that is **30% of the
+weights** renormalised away, and the report says so in its own section rather
+than in a footnote. The reported index is a different index from §9's
+seven-term one, not the same one with a gap.
+
+### 9.5 What Phase 6 did NOT do
+
+**§9.1 tier 2 — single-module isolation — was not run.** The wiring exists
+(`ConditionB(enabled_modules=...)`, `phase6_full_eval.py --isolation`), and
+the report states the gap rather than skipping it. Cost: 3 rows × 39 cases at
+7–12 calls/case ≈ 1,000 requests, ~8 h at 2/min. CLAUDE.md §9.1 calls tier 2
+the stronger claim, and this project does not make it.
+
+**This is the clearest next job**, and it is a better use of a budget day than
+anything else outstanding — it is the one measurement that would let the
+project say "only the ensemble is good across all the sub-metrics" rather than
+inferring it from a cumulative trend.
+
+### 9.6 New commands
+
+```bash
+python demos/phase6_full_eval.py              # build results/report.md, free
+python demos/phase6_full_eval.py --dry-run    # price the paid modes
+python demos/phase6_full_eval.py --timing 4   # the uncached LAT run, ~58 requests
+python demos/phase6_full_eval.py --isolation  # §9.1 tier 2, ~9h — not yet run
+```
