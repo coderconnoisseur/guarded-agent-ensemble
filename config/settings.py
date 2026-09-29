@@ -344,7 +344,7 @@ OLLAMA_BASE_URL = _setting("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 #                     difference in a two-backbone grid is then attributable
 #                     to capability rather than to a different training
 #                     recipe. Needs thinking mode off — see
-#                     OLLAMA_DISABLE_THINKING.
+#                     OLLAMA_MIN_MAX_TOKENS.
 #   2. qwen2.5:3b     ~1.9GB. Fallback: no thinking mode to fight, reliably
 #                     good at structured JSON, and roomier on a 4GB card.
 #                     Weaker family-match argument, lower risk.
@@ -357,12 +357,27 @@ OLLAMA_MODEL_CHAIN = [
     "llama3.2:3b",
 ]
 
-# Qwen3 is a hybrid-reasoning model: left alone it emits a <think> block
-# before answering. Under CLAUDE.md §5.3's prompted-JSON protocol that block
-# is pure cost — it consumes the reply budget and the Action:/Final: parser
-# rejects what comes back. Off by default; set OLLAMA_DISABLE_THINKING=0 to
-# measure the difference rather than assume it.
-OLLAMA_DISABLE_THINKING = _setting("OLLAMA_DISABLE_THINKING", "1") != "0"
+# The reply budget floor for a local reasoning model.
+#
+# MEASURED 2026-09-29 on qwen3:4b via Ollama 0.34.4, against the real ReAct
+# system prompt (tool catalogue + task):
+#
+#   max_tokens=400   finish=length  reasoning=1771ch  content=0ch     unparseable
+#   max_tokens=1200  finish=stop    reasoning=3524ch  content=144ch   parses
+#   max_tokens=2500  finish=stop    reasoning=3524ch  content=144ch   identical
+#
+# The model spends ~900 tokens thinking before emitting one Thought:/Action:
+# line, and DEFAULT_MAX_TOKENS=400 cuts it off mid-thought. 400 is a *Groq*
+# constraint (that provider charges requested max_tokens against a 1000 OTPM
+# ceiling); nothing local imposes it. 2500 buys nothing over 1200, so this is
+# 1600 - 1200 plus headroom for the longer planning prompt, still far below
+# the point where it would cost anything locally.
+#
+# Do NOT try to disable thinking instead. Three ways were measured and none
+# works through Ollama's /v1 shim; reasoning_effort="none" is worse than
+# useless because it relocates the thinking into `content`, where the
+# Action:/Final: parser sees prose. See OllamaProvider for the table.
+OLLAMA_MIN_MAX_TOKENS = int(_setting("OLLAMA_MIN_MAX_TOKENS", "1600") or 1600)
 
 # No provider quota and no token-per-minute ceiling: the only limits are the
 # machine's. Both numbers exist purely so the shared budget/limiter machinery

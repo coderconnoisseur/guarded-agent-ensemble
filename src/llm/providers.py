@@ -230,6 +230,36 @@ class OllamaProvider(OpenAICompatibleProvider):
     gaining sensitivity. So a candidate is probed before it is trusted:
     `python demos/local_probe.py`.
 
+    THINKING MODE CANNOT BE SWITCHED OFF, AND THAT IS MEASURED
+    ----------------------------------------------------------
+    qwen3:4b is a hybrid-reasoning model. Three ways of disabling that were
+    tried against Ollama 0.34.4 on 2026-09-29, prompt "Reply with exactly:
+    Final: hello", max_tokens=200:
+
+        parameter                              reasoning   content
+        (baseline)                                 660ch      12ch  "Final: hello"
+        think: false                               736ch      12ch  no effect
+        chat_template_kwargs.enable_thinking       736ch      12ch  no effect
+        reasoning_effort: "none"                     0ch     759ch  WORSE
+
+    The first two are no-ops through the `/v1` shim. The third is actively
+    harmful: it does not stop the thinking, it relocates it *into* `content`,
+    where the `Action:`/`Final:` parser sees prose. Code that did the first
+    two shipped briefly and was removed - a setting that silently does
+    nothing is exactly what this project keeps finding and deleting.
+
+    What the baseline row shows is that none of it is necessary: Ollama
+    returns the thinking in a separate `reasoning` field and `content` holds a
+    clean answer. The only real constraint is that the answer comes *after*
+    the thinking, so the reply budget has to cover both. Measured on the real
+    ReAct prompt:
+
+        max_tokens=400    finish=length  reasoning=1771ch  content=0ch     unparseable
+        max_tokens=1200   finish=stop    reasoning=3524ch  content=144ch   parses
+        max_tokens=2500   finish=stop    reasoning=3524ch  content=144ch   identical
+
+    Hence `OLLAMA_MIN_MAX_TOKENS` rather than a thinking switch.
+
     No API key. Ollama ignores the Authorization header, but one is sent
     anyway so the request path stays identical to the hosted providers - a
     second code path here is a second place for the two to drift.
@@ -254,19 +284,24 @@ class OllamaProvider(OpenAICompatibleProvider):
         self, model: str, messages: list[dict[str, Any]], params: dict[str, Any]
     ) -> dict[str, Any]:
         body = super().build_body(model, messages, params)
-        # Qwen3 and other hybrid-reasoning models emit a <think> block before
-        # the answer. Under the project's prompted-JSON protocol (CLAUDE.md
-        # §5.3) that block is pure cost: it consumes the token budget and the
-        # `Action:`/`Final:` parser rejects what comes back. Ollama's OpenAI
-        # shim passes unknown keys through to the model's chat template, and
-        # these are the two spellings the Qwen3 templates read.
+        # RAISE THE REPLY BUDGET. This is the whole adaptation a local
+        # reasoning model needs, and it replaces three things that were tried
+        # first and measured to be useless - see the class docstring.
         #
-        # Harmless on a model without a thinking mode - its template ignores
-        # the keys - so it is unconditional rather than a per-model special
-        # case, which would be one more thing to keep in sync with the chain.
-        if settings.OLLAMA_DISABLE_THINKING:
-            body.setdefault("think", False)
-            body.setdefault("chat_template_kwargs", {"enable_thinking": False})
+        # `DEFAULT_MAX_TOKENS = 400` is a *Groq* constraint: that provider
+        # charges the requested max_tokens against a 1000 output-tokens-per-
+        # minute ceiling, so 400 is what keeps two calls a minute possible. No
+        # such ceiling exists locally, and qwen3:4b spends ~900 tokens
+        # thinking before it emits a single `Thought:/Action:` line. At 400 it
+        # is cut off mid-thought (finish_reason "length", content empty), the
+        # provider falls back to the reasoning field, and the agent loop sees
+        # prose it cannot parse.
+        #
+        # Only ever raises, never lowers: a caller that deliberately asked for
+        # a bigger budget keeps it.
+        floor = settings.OLLAMA_MIN_MAX_TOKENS
+        if body.get("max_tokens") is None or body["max_tokens"] < floor:
+            body["max_tokens"] = floor
         return body
 
 

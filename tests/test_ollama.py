@@ -58,36 +58,61 @@ class TestProviderWiring:
         assert OllamaProvider().extract_content(payload) == "Final: 42"
 
 
-class TestThinkingModeIsDisabled:
-    """Qwen3 emits a <think> block unless told not to. Under CLAUDE.md §5.3's
-    prompted-JSON protocol that block consumes the reply budget and the
-    Action:/Final: parser rejects what comes back."""
+class TestReplyBudget:
+    """Thinking cannot be switched off through Ollama's /v1 shim - measured,
+    with the table in OllamaProvider's docstring - so the reply budget has to
+    cover the thinking AND the answer that follows it.
 
-    def _body(self):
+    An earlier version of this provider sent `think: false` and
+    `chat_template_kwargs.enable_thinking: false`. Both were measured to be
+    exact no-ops and were removed: a setting that silently does nothing is the
+    failure mode this project keeps finding.
+    """
+
+    def _body(self, params=None):
         return OllamaProvider().build_body(
-            "qwen3:4b", [{"role": "user", "content": "hi"}], {"temperature": 0}
+            "qwen3:4b", [{"role": "user", "content": "hi"}], params or {}
         )
 
-    def test_both_template_spellings_are_sent(self):
-        body = self._body()
-        assert body["think"] is False
-        assert body["chat_template_kwargs"] == {"enable_thinking": False}
+    def test_raises_the_hosted_default_to_the_local_floor(self):
+        """400 is a Groq OTPM constraint. Locally it truncates qwen3:4b
+        mid-thought: finish_reason 'length', content empty, unparseable."""
+        body = self._body({"max_tokens": settings.DEFAULT_MAX_TOKENS})
+        assert body["max_tokens"] == settings.OLLAMA_MIN_MAX_TOKENS
+        assert settings.OLLAMA_MIN_MAX_TOKENS > settings.DEFAULT_MAX_TOKENS
+
+    def test_covers_the_measured_requirement(self):
+        """1200 was measured sufficient on the real ReAct prompt; 2500 gave a
+        byte-identical reply, so the floor only needs to clear 1200."""
+        assert settings.OLLAMA_MIN_MAX_TOKENS >= 1200
+
+    def test_applies_when_the_caller_sets_nothing(self):
+        assert self._body()["max_tokens"] == settings.OLLAMA_MIN_MAX_TOKENS
+
+    def test_never_lowers_a_larger_caller_budget(self):
+        big = settings.OLLAMA_MIN_MAX_TOKENS * 3
+        assert self._body({"max_tokens": big})["max_tokens"] == big
 
     def test_the_ordinary_fields_are_untouched(self):
-        body = self._body()
+        body = self._body({"temperature": 0})
         assert body["model"] == "qwen3:4b"
         assert body["messages"] == [{"role": "user", "content": "hi"}]
         assert body["temperature"] == 0
 
-    def test_an_explicit_caller_value_wins(self):
-        """setdefault, not assignment: a caller measuring the difference
-        rather than assuming it must be able to turn thinking back on."""
-        body = OllamaProvider().build_body("qwen3:4b", [], {"think": True})
-        assert body["think"] is True
+    def test_the_removed_no_ops_are_not_sent(self):
+        """Guards the deletion. Sending these back would look like a fix and
+        measurably do nothing."""
+        body = self._body()
+        assert "think" not in body
+        assert "chat_template_kwargs" not in body
 
-    def test_can_be_turned_off_by_config(self, monkeypatch):
-        monkeypatch.setattr(settings, "OLLAMA_DISABLE_THINKING", False)
-        assert "think" not in OllamaProvider().build_body("qwen3:4b", [], {})
+    def test_the_hosted_providers_are_unaffected(self):
+        """Only the local arm gets the bigger budget - raising it on Groq
+        would exceed that provider's entire per-minute output allowance."""
+        hosted = GroqProvider().build_body(
+            "q", [], {"max_tokens": settings.DEFAULT_MAX_TOKENS}
+        )
+        assert hosted["max_tokens"] == settings.DEFAULT_MAX_TOKENS
 
 
 class TestTheHostedArmIsUnaffected:

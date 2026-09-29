@@ -31,3 +31,9 @@ venv/
 # corpora; copying 352 harmful prompts into a public repo is what that canary
 # exists to discourage. Licence permits it, the commons does not.
 external/
+
+# Knowledge graph derived from this repo by the graphify skill. 6.9MB of
+# artifacts (a 2.5MB graph.json, a 2MB single-file HTML viewer, an extraction
+# cache) that regenerate from the source in one command, so they are build
+# output rather than source - same reasoning as results/ and src/llm/cache/.
+graphify-out/

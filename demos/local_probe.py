@@ -228,7 +228,9 @@ def main() -> int:
     banner("LOCAL BACKBONE PROBE (CLAUDE.md §11)")
     print(f"  Server     : {settings.OLLAMA_BASE_URL}")
     print(f"  Candidates : {', '.join(candidates)}")
-    print(f"  Thinking   : {'disabled' if settings.OLLAMA_DISABLE_THINKING else 'ON'}")
+    print(f"  Reply cap  : {settings.OLLAMA_MIN_MAX_TOKENS} tokens "
+          f"(vs {settings.DEFAULT_MAX_TOKENS} hosted; thinking cannot be "
+          f"disabled, so the budget must cover it)")
     print(f"  Pinned arm : {settings.BACKBONE_MODEL} (unchanged; this is a "
           f"second arm)")
     print()

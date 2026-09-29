@@ -1,7 +1,7 @@
 # Handoff — Guarded Agent Ensemble
 
 **Updated:** 2026-09-27 · **Repo:** https://github.com/coderconnoisseur/guarded-agent-ensemble (public)
-**Branch:** `master` · **37 commits** · **628 tests passing**
+**Branch:** `master` · **38 commits** · **631 tests passing**
 **Phases 0–5 complete**, plus the §5.2 coverage expansion, the §5.1
 frozen-suite ablation, confidence intervals on every rate (§5.5), the
 external-benchmark work (§5.2d/e) and the replay harness (§5.6).
@@ -89,7 +89,7 @@ python demos/frozen_ablation.py                # all five rows, one frozen suite
 python demos/phase6_full_eval.py               # PHASE 6: results/report.md, free
 python demos/phase6_full_eval.py --dry-run     # price the modes that cost requests
 python demos/local_probe.py                    # can a local model be the backbone?
-python -m pytest                               # 628 tests, all offline
+python -m pytest                               # 631 tests, all offline
 ```
 
 ---
@@ -988,6 +988,12 @@ requests/minute is why the frozen ablation is ~9 h, why N=1, and why LAT needs
 a ~30 s sleep subtracted out of every reading. On a local model there is no
 limiter at all, so N=3 and a bigger suite become possible.
 
+> **REFUTED FOR qwen3:4b, measured 2026-09-29 — see §10.4.** Removing the
+> limiter does not help when each local call costs 60 s against the limiter's
+> 30 s. The five-row ablation projects **21.4 h local vs 10.6 h hosted**. The
+> headroom argument above is untouched; this throughput one is wrong for this
+> model, and §10.5 says what to try instead.
+
 ### 10.2 The floor, and why the probe exists
 
 **Do not drop below ~3B.** `liquid/lfm-2.5-2.6b` was retired from
@@ -1034,3 +1040,103 @@ tok/s. A 3–4B model fits entirely and is also the weaker backbone we want.
 **Nothing has been measured on a local model yet.** The next step is
 `ollama pull qwen3:4b` then `python demos/local_probe.py`; only if all three
 gates pass is a grid run worth the wall clock.
+
+### 10.4 PROBE RESULT, 2026-09-29: qwen3:4b passes, and one of §10.1's two arguments is wrong
+
+`python demos/local_probe.py --model qwen3:4b`, GTX 1650 Ti / 4 GB:
+
+| gate | result |
+|---|---|
+| reachable | PASS |
+| ReAct protocol | **PASS** — `Thought:` + `Action: {"tool": "files.list", "args": {}}`, 60.3 s |
+| tool dependency graph | **PASS** — valid 2-node plan, `files.read` → `comms.send_email` with the dependency, 110.7 s |
+
+The model is above the floor: it speaks the protocol and it plans correctly.
+
+**But the throughput argument in §10.1 does not survive contact with the
+measurement.** At 60.3 s per agent turn, against Groq's rate-limited cadence
+of 30 s per call (2/min), the five-row frozen ablation over 39 cases projects:
+
+| configuration | calls/case | local (h) | hosted (h) |
+|---|---|---|---|
+| Condition A | 2.8 | 1.8 | 0.9 |
+| + Harm Gate | 2.3 | 1.5 | 0.7 |
+| + Planner | 7.1 | 4.6 | 2.3 |
+| + Firewall/Quarantine | 8.9 | 5.8 | 2.9 |
+| + everything | 11.6 | 7.6 | 3.8 |
+| **TOTAL** | | **21.4** | **10.6** |
+
+**Local is 2.0x the wall clock of the arm it was supposed to unblock.** The
+cause is the thinking: ~900 tokens of reasoning before every answer, on a card
+that only just fits the weights. Removing the rate limit does not help when
+each call costs twice what the rate limit was charging.
+
+So of §10.1's two arguments, only one stands:
+
+- **Headroom — still the real reason, unaffected.** A 4B model should fail
+  more often than a 27B, and significance is driven by the baseline rate
+  (n=65 at 0.07, n=9 at 0.40). Nothing measured here touches that.
+- **Throughput — refuted for qwen3:4b.** It is slower, not faster. N=3 and a
+  bigger suite are *further* out of reach on this model, not closer.
+
+### 10.5 The consequence: qwen2.5:3b is now the better candidate
+
+`qwen2.5:3b` has **no thinking mode**, which on this evidence is the dominant
+cost rather than a nuisance. It is also smaller (~1.9 GB vs ~2.5 GB), so it
+fits a 4 GB card with more room for context.
+
+It gives up the family-match argument that put qwen3:4b first — `BACKBONE_MODEL`
+is `qwen/qwen3.8-27b`, so qwen3:4b held generation constant and varied only
+scale — but a 21-hour run that cannot afford N=3 is not worth that tidiness.
+
+**Not yet measured. Do not assume it is faster — probe it:**
+
+```bash
+ollama pull qwen2.5:3b
+python demos/local_probe.py --model qwen2.5:3b
+```
+
+If its per-turn time is under ~15 s the throughput argument comes back and
+local becomes genuinely better than hosted; if it is not, the honest position
+is that the local arm buys headroom and costs wall clock, and the grid should
+be scoped accordingly.
+
+### 10.6 What the probe cost, and what it caught
+
+Zero API requests — it is entirely local. It caught two things that would
+otherwise have been discovered eight hours into a grid run:
+
+**1. Three thinking-disable parameters that were exact no-ops.** Measured on
+Ollama 0.34.4, prompt "Reply with exactly: Final: hello", max_tokens=200:
+
+| parameter | reasoning | content |
+|---|---|---|
+| *(baseline)* | 660 ch | 12 ch — `"Final: hello"` |
+| `think: false` | 736 ch | 12 ch — **no effect** |
+| `chat_template_kwargs.enable_thinking: false` | 736 ch | 12 ch — **no effect** |
+| `reasoning_effort: "none"` | 0 ch | 759 ch — **worse** |
+
+The first two shipped briefly in `OllamaProvider` and were removed; a setting
+that silently does nothing is precisely the failure class §1 catalogues. The
+third does not stop the thinking, it relocates it into `content`, where the
+`Action:`/`Final:` parser sees prose.
+
+**2. The actual fix, which is a budget rather than a switch.** The baseline
+row shows the thinking is harmless when it is allowed to finish — Ollama
+returns it in a separate `reasoning` field and `content` holds a clean answer.
+Measured against the real ReAct prompt:
+
+| `max_tokens` | finish | reasoning | content | parses |
+|---|---|---|---|---|
+| 400 | `length` | 1771 ch | **0 ch** | no |
+| 1200 | `stop` | 3524 ch | 144 ch | **yes** |
+| 2500 | `stop` | 3524 ch | 144 ch | yes (identical) |
+
+`DEFAULT_MAX_TOKENS = 400` is a **Groq** constraint (requested `max_tokens` is
+charged against a 1000 OTPM ceiling) with no local meaning. Hence
+`OLLAMA_MIN_MAX_TOKENS = 1600`, applied in `OllamaProvider.build_body`, which
+only ever raises and never lowers a caller's budget.
+
+One `empty content, falling back to reasoning` warning still appears
+occasionally at 1600, so the truncation is reduced rather than eliminated.
+Worth watching if a grid run produces unparseable steps.
