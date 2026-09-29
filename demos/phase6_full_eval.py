@@ -55,6 +55,7 @@ from config import settings  # noqa: E402
 from src.eval import report as report_module  # noqa: E402
 from src.eval import runner  # noqa: E402
 from src.llm.client import BudgetExceededError, LLMClient, LLMError  # noqa: E402
+from demos import frozen_ablation  # noqa: E402
 from src.pipeline.condition_a import ConditionA  # noqa: E402
 from src.pipeline.condition_b import ConditionB  # noqa: E402
 
@@ -128,7 +129,7 @@ def timing_run(client: LLMClient, count: int) -> int:
     return 0
 
 
-def isolation_run(client: LLMClient, force: bool) -> int:
+def isolation_run(client: LLMClient, force: bool, model: str = "") -> int:
     """§9.1 tier 2: each module alone against the full frozen suite.
 
     The claim this supports is the one CLAUDE.md §9.1 says the project *can*
@@ -138,18 +139,32 @@ def isolation_run(client: LLMClient, force: bool) -> int:
     contains every earlier module.
     """
     cases = runner.load_cases()
+    model = model or settings.BACKBONE_MODEL
     for label, stem, modules in ISOLATION_ROWS:
-        path = settings.RESULTS_DIR / f"{stem}.json"
+        # Backbone-scoped, for the same reason frozen_ablation.row_path is:
+        # a second arm must not overwrite the first arm's evidence.
+        path = frozen_ablation.row_path(stem, model)
         if path.exists() and not force:
             print(f"  {label}: already on disk ({path.name}), skipping.")
             continue
         banner(f"ISOLATION - {label}")
-        pipeline = ConditionB(client, enabled_modules=modules)
+        # The model must be passed through, or the isolation rows silently
+        # measure a different backbone from the ablation they are compared
+        # against - the confound this project keeps guarding against.
+        pipeline = ConditionB(client, model=model, enabled_modules=modules)
         report = runner.run_suites(
             pipeline, cases,
             on_result=lambda r: print(f"  {r.summary_line()}", flush=True),
         )
         report.notes.append(f"single-module isolation: {', '.join(sorted(modules))}")
+        errored = [r for r in report.results if r.error]
+        if not frozen_ablation.accept_row(label, path, errored, len(report.results)):
+            return 1
+        note = frozen_ablation.module_health_note(report.results)
+        if not frozen_ablation.accept_module_health(path, report.results, accept=True):
+            pass  # accepted, but the note below records it
+        if note:
+            report.notes.append(note)
         report.write(path)
         print(f"  Wrote {path.name} ({report.passed_count}/{len(report.results)})")
         print(f"  Budget: {client.budget_summary()}", flush=True)
@@ -158,6 +173,10 @@ def isolation_run(client: LLMClient, force: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Phase 6: GAI + final report.")
+    parser.add_argument("--model", default=settings.BACKBONE_MODEL,
+                        help="Backbone for the timing/isolation runs. "
+                             "Rows are written under a backbone-scoped "
+                             "filename so arms cannot overwrite each other.")
     parser.add_argument("--dry-run", action="store_true",
                         help="Say what each mode would cost; spend nothing.")
     parser.add_argument("--timing", type=int, metavar="N", default=0,
@@ -182,7 +201,21 @@ def main() -> int:
     print(f"  Results  : {settings.RESULTS_DIR}")
 
     if args.dry_run:
-        rate = settings.GROQ_RATE_LIMIT_PER_MINUTE
+        # Seconds per call for the arm actually selected, not a quota. See
+        # frozen_ablation.estimate: converting a requests/minute quota into
+        # wall clock prices a local run at "0.0h" and a hosted one at ~10h.
+        provider = next(
+            (prov for prov, name in settings.PROVIDER_CHAIN if name == args.model),
+            "groq",
+        )
+        if provider == "ollama":
+            per_call = settings.OLLAMA_MEASURED_SECONDS_PER_CALL
+            basis = f"~{per_call:.1f}s/call measured locally; no provider quota"
+        else:
+            rate = settings.PROVIDER_LIMITS.get(provider, {}).get(
+                "rate_limit_per_minute", settings.GROQ_RATE_LIMIT_PER_MINUTE)
+            per_call = 60.0 / rate
+            basis = f"{rate} requests/minute, so {per_call:.0f}s/call"
         cases = len(runner.load_cases())
         banner("COST, IF EACH MODE WERE RUN")
         print(f"  {'mode':34} {'est. calls':>11} {'est. time':>10}")
@@ -190,12 +223,11 @@ def main() -> int:
         for n in (4,):
             calls = n * (2.8 + 11.6)
             print(f"  {f'--timing {n}':34} {calls:>11.0f} "
-                  f"{calls / rate / 60:>9.1f}h")
+                  f"{calls * per_call / 3600:>9.1f}h")
         iso = cases * (7.1 + 8.9 + 11.6)
         print(f"  {'--isolation (3 rows)':34} {iso:>11.0f} "
-              f"{iso / rate / 60:>9.1f}h")
-        print(f"\n  Bound by {rate} requests/minute, not by the "
-              f"{settings.GROQ_DAILY_REQUEST_CAP}/day cap.")
+              f"{iso * per_call / 3600:>9.1f}h")
+        print(f"\n  Backbone {args.model} via {provider}: {basis}.")
         print("  Cached cases cost nothing; the isolation figure ignores the "
               "cache and is an upper bound.")
         return 0
@@ -217,7 +249,7 @@ def main() -> int:
                     return code
         if args.isolation:
             with LLMClient() as client:
-                code = isolation_run(client, args.force)
+                code = isolation_run(client, args.force, args.model)
                 if code:
                     return code
     except BudgetExceededError as exc:
