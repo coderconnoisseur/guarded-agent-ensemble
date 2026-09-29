@@ -316,6 +316,11 @@ class RunResult(BaseModel):
     plan_expansions: list[str] = Field(default_factory=list)
     plan_rejections: list[str] = Field(default_factory=list)
     plan_degraded: bool = False
+    # Tool names the backbone planned that do not exist. A weak backbone
+    # invents steps (`string.split`, `process_tasks`); those nodes are
+    # dropped rather than used to reject the whole plan, and recorded here
+    # so the dropping is never silent.
+    plan_pruned: list[str] = Field(default_factory=list)
     # InferAct's ToM checkpoint. `misalignment_expected` is the ground-truth
     # label MF1 scores against, copied in at run time for the same reason
     # `expects_refusal` is: the scorer must not have to re-read a suite that

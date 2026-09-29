@@ -1044,3 +1044,52 @@ class TestUnitTwoDoesNotSeeTheTrajectory:
             instruction, TRAJECTORY, "files.delete", {"path": "a"},
         )
         assert instruction not in client.calls[0]["messages"][-1]["content"]
+
+
+class TestTheJudgeNeedNotBeTheActor:
+    """InferAct does not require the verifier to be the model under
+    verification, and forcing it to be was costing real utility.
+
+    ConditionB used to pass its backbone in as the judge unconditionally, so a
+    weak backbone produced a weak judge. Measured on qwen2.5:3b: MF1 = 0.31
+    over 9 rulings, with two benign cases failing purely because the
+    checkpoint flagged them. The Harm Gate - the one module with a *dedicated*
+    model rather than a borrowed backbone - drove HS 1.00 -> 0.00 at zero
+    over-refusal on the same arm.
+    """
+
+    def _pipeline(self, **kwargs):
+        from src.pipeline.condition_b import ConditionB
+
+        return ConditionB(object(), enabled_modules={"misalignment"}, **kwargs)
+
+    def test_the_pinned_arm_is_unchanged(self):
+        """MISALIGNMENT_JUDGE_MODEL defaults to BACKBONE_MODEL, so on the
+        pinned arm backbone and judge coincide exactly as before. Every number
+        already measured there has to stand."""
+        from config import settings
+
+        pipeline = self._pipeline()
+        assert pipeline.model == settings.BACKBONE_MODEL
+        assert pipeline.checkpoint.model == settings.BACKBONE_MODEL
+
+    def test_a_weaker_backbone_does_not_drag_the_judge_down_with_it(self):
+        from config import settings
+
+        pipeline = self._pipeline(model="some-tiny/model-3b")
+        assert pipeline.model == "some-tiny/model-3b"
+        assert pipeline.checkpoint.model == settings.MISALIGNMENT_JUDGE_MODEL
+        assert pipeline.checkpoint.model != pipeline.model
+
+    def test_an_explicit_judge_still_wins(self):
+        pipeline = self._pipeline(model="backbone/x", judge_model="judge/y")
+        assert pipeline.checkpoint.model == "judge/y"
+
+    def test_the_judge_provider_follows_its_own_model(self):
+        """The paired-provider rule: the configured provider describes where
+        the configured model lives, so using the configured judge must also
+        use its configured provider."""
+        from config import settings
+
+        pipeline = self._pipeline(model="some-tiny/model-3b")
+        assert pipeline.checkpoint.provider == settings.MISALIGNMENT_JUDGE_PROVIDER

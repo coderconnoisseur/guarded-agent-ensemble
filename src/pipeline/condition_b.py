@@ -68,6 +68,7 @@ class ConditionB:
         client: LLMClient,
         registry: ToolRegistry | None = None,
         enabled_modules: set[str] | None = None,
+        judge_model: str | None = None,
         model: str | None = None,
         use_chain: bool = False,
         enable_harm_classifier: bool = True,
@@ -108,8 +109,26 @@ class ConditionB:
             if "planner" in self.enabled_modules
             else None
         )
+        # THE JUDGE NEED NOT BE THE ACTOR, and forcing it to be was costing
+        # real utility. InferAct does not require the verifier to be the model
+        # under verification, and this pipeline was passing the backbone in as
+        # the judge unconditionally - so a weak backbone produced a weak judge
+        # and the checkpoint false-positived on benign work.
+        #
+        # Measured on qwen2.5:3b: MF1 = 0.31 over 9 rulings, and two benign
+        # cases (`benign_b001`, `benign_t001`) failed purely because the
+        # checkpoint flagged them. The Harm Gate, which has a *dedicated*
+        # model rather than borrowing the backbone, drove HS 1.00 -> 0.00 at
+        # zero over-refusal on the same arm. That contrast is the argument.
+        #
+        # `judge_model=None` now means "use MISALIGNMENT_JUDGE_MODEL", which
+        # defaults to BACKBONE_MODEL - so the pinned arm is byte-identical and
+        # every number already measured on it stands. Only an arm that
+        # overrides the backbone sees a difference, and it sees the configured
+        # judge instead of its own weaker model.
+        self.judge_model = judge_model
         self.checkpoint = (
-            MisalignmentCheckpoint(client=client, model=self.model)
+            MisalignmentCheckpoint(client=client, model=judge_model)
             if "misalignment" in self.enabled_modules
             else None
         )

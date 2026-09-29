@@ -85,9 +85,31 @@ class TestParsePlan:
         _, error = parse_plan('{"steps": []}')
         assert "plan" in error
 
-    def test_step_without_a_tool_is_an_error(self):
-        _, error = parse_plan(plan_reply({"id": "n1", "args": {}}))
-        assert "tool" in error
+    def test_step_without_a_tool_is_skipped_not_fatal(self):
+        """A step naming no tool is a sentinel, not a malformed plan.
+
+        Small models append a terminal node to signal completion - measured on
+        qwen2.5:3b, which emits {"tool": "None", "args": {}} as a final step.
+        Rejecting the whole plan over it degraded the Planner on 8/31 runs and
+        cost two benign tasks outright. The step authorises nothing either
+        way, so it is dropped rather than used to throw the plan away.
+        """
+        nodes, error = parse_plan(plan_reply(
+            {"id": "n1", "tool": "files.list"}, {"id": "n2", "args": {}}))
+        assert error == ""
+        assert [n.tool for n in nodes] == ["files.list"]
+
+    @pytest.mark.parametrize("sentinel", ["None", "none", "null", "STOP", "done"])
+    def test_sentinel_tool_names_are_skipped(self, sentinel):
+        nodes, error = parse_plan(plan_reply(
+            {"id": "n1", "tool": "files.list"}, {"id": "n2", "tool": sentinel}))
+        assert error == ""
+        assert [n.tool for n in nodes] == ["files.list"]
+
+    def test_a_plan_of_only_sentinels_is_empty_not_an_error(self):
+        nodes, error = parse_plan(plan_reply({"id": "n1", "tool": "None"}))
+        assert error == ""
+        assert nodes == []
 
     def test_ids_are_generated_when_missing(self):
         nodes, _ = parse_plan(plan_reply({"tool": "files.list"}))
@@ -361,3 +383,92 @@ class TestPlanRecordIsUnambiguous:
         assert row.plan_ran is True
         assert row.plan_node_count == 0
         assert row.plan_degraded is False
+
+
+class TestPruneUncallableNodes:
+    """A node naming a tool that does not exist authorises nothing.
+
+    The TDG is a whitelist: it says what the agent MAY do. A node naming a
+    non-existent tool cannot widen what the agent reaches, because the
+    registry refuses that call regardless. Rejecting the whole plan over one,
+    by contrast, degrades the Planner to read-only and loses the constraint on
+    every real node too.
+
+    Measured on qwen2.5:3b: the model invents pseudo-tools for steps it
+    imagines it needs (`string.split`, `string.slice`, `extract_action_items`,
+    `process_tasks`). Those plus sentinel nodes degraded the Planner on 8/31
+    runs, which cost two benign tasks outright.
+    """
+
+    def _registry(self):
+        from src.tools.registry import build_registry
+
+        return build_registry("workspace")
+
+    def _nodes(self, *tools):
+        from src.defense.planner import PlanNode
+
+        return [PlanNode(id=f"n{i}", tool=t, args={}, depends_on=[], why="")
+                for i, t in enumerate(tools, start=1)]
+
+    def test_real_tools_survive(self):
+        from src.defense.planner import prune_uncallable
+
+        kept, dropped = prune_uncallable(
+            self._nodes("files.read", "comms.send_email"), self._registry())
+        assert [n.tool for n in kept] == ["files.read", "comms.send_email"]
+        assert dropped == []
+
+    def test_invented_tools_are_dropped_and_named(self):
+        from src.defense.planner import prune_uncallable
+
+        kept, dropped = prune_uncallable(
+            self._nodes("files.read", "string.split", "process_tasks"),
+            self._registry())
+        assert [n.tool for n in kept] == ["files.read"]
+        assert sorted(dropped) == ["process_tasks", "string.split"]
+
+    def test_dropping_never_adds_a_tool(self):
+        """The safety property: pruning can only shrink what is permitted."""
+        from src.defense.planner import prune_uncallable
+
+        registry = self._registry()
+        before = self._nodes("files.read", "invented.tool")
+        kept, _ = prune_uncallable(before, registry)
+        assert {n.tool for n in kept} <= {n.tool for n in before}
+        assert all(n.tool in set(registry.names()) for n in kept)
+
+    def test_a_plan_of_only_invented_tools_is_rejected_not_accepted(self):
+        """An all-invented plan is not a plan. It must still degrade rather
+        than silently become an empty (permissive-to-read-only) graph."""
+        from src.defense.planner import Planner
+
+        registry = self._registry()
+        client = ScriptedClient(
+            '{"plan": [{"id": "n1", "tool": "string.split", "args": {}}]}',
+            '{"plan": [{"id": "n1", "tool": "string.split", "args": {}}]}',
+        )
+        graph = Planner(client=client).build_plan("do a thing", registry)
+        assert graph.degraded
+
+    def test_a_deliberately_empty_plan_is_still_valid(self):
+        """"No tools needed" is a legitimate plan and must not be confused
+        with "everything was pruned away"."""
+        from src.defense.planner import Planner
+
+        graph = Planner(client=ScriptedClient('{"plan": []}')).build_plan(
+            "say hello", self._registry())
+        assert not graph.degraded
+        assert graph.nodes == []
+
+    def test_the_mixed_case_keeps_the_real_node(self):
+        from src.defense.planner import Planner
+
+        graph = Planner(client=ScriptedClient(
+            '{"plan": [{"id": "n1", "tool": "files.read", "args": {}},'
+            ' {"id": "n2", "tool": "None", "args": {}},'
+            ' {"id": "n3", "tool": "extract_items", "args": {}}]}'
+        )).build_plan("read it", self._registry())
+        assert not graph.degraded
+        assert [n.tool for n in graph.nodes] == ["files.read"]
+        assert graph.pruned == ["extract_items"]

@@ -93,6 +93,11 @@ class ToolDependencyGraph:
     nodes: list[PlanNode] = field(default_factory=list)
     raw: str = ""
     degraded: bool = False  # true when planning failed and we fell back
+    # Tool names the backbone planned that the registry does not have. Kept
+    # rather than discarded so a run can show that the model invented steps -
+    # on a small backbone this is common and it is a property worth reporting,
+    # not an implementation detail. See `prune_uncallable`.
+    pruned: list[str] = field(default_factory=list)
 
     def tools(self) -> set[str]:
         return {n.tool for n in self.nodes}
@@ -202,6 +207,44 @@ Reply again with a corrected JSON object in the same format, and nothing else.
 """
 
 
+#: Tool names that mean "stop", not "call something". Matched
+#: case-insensitively. These are what small models emit for a terminal node.
+_SENTINEL_TOOLS = {"none", "null", "n/a", "na", "stop", "end", "done", "finish"}
+
+
+def prune_uncallable(
+    nodes: list[PlanNode], registry: ToolRegistry
+) -> tuple[list[PlanNode], list[str]]:
+    """Drop plan nodes naming a tool the registry does not have.
+
+    Returns `(kept, dropped_tool_names)`.
+
+    **Dropping rather than rejecting is safe, and it is not leniency.** The
+    TDG is a whitelist: it says what the agent MAY do. A node naming a
+    non-existent tool authorises nothing, because the registry would refuse
+    that call regardless - so removing it cannot widen what the agent can
+    reach. Rejecting the entire plan over it, by contrast, degrades the
+    Planner to read-only and loses the constraint on every *real* node too.
+
+    Measured on qwen2.5:3b: the model invents pseudo-tools for steps it
+    imagines it needs - `string.split`, `string.slice`, `extract_action_items`,
+    `process_tasks`. Those, plus sentinel nodes, degraded the Planner on 8/31
+    runs. The dropped names are returned rather than swallowed so a run can
+    still show that the backbone planned things that do not exist.
+
+    If nothing survives, the caller still rejects: an all-invented plan is not
+    a plan.
+    """
+    available = set(registry.names())
+    kept, dropped = [], []
+    for node in nodes:
+        if node.tool in available:
+            kept.append(node)
+        else:
+            dropped.append(node.tool)
+    return kept, dropped
+
+
 def parse_plan(text: str) -> tuple[list[PlanNode], str]:
     """Parse the model's plan reply. Returns (nodes, error_message)."""
     payload, error = _extract_json_object(text)
@@ -219,7 +262,22 @@ def parse_plan(text: str) -> tuple[list[PlanNode], str]:
             return [], f"step {index + 1} is not an object"
         tool = entry.get("tool") or entry.get("name")
         if not isinstance(tool, str) or not tool.strip():
-            return [], f'step {index + 1} has no string "tool"'
+            # A step with no tool is a SENTINEL, not a malformed plan. Small
+            # models routinely append a terminal node to signal completion -
+            # measured on qwen2.5:3b, which emits
+            # {"tool": "None", "args": {}, "why": "No further actions needed"}
+            # as a final step. Rejecting the whole plan over it degraded the
+            # Planner on 8/31 runs, which cost two benign tasks outright.
+            #
+            # It is skipped rather than kept: a node naming no tool can never
+            # be executed, so dropping it removes nothing the agent could
+            # have done.
+            logger.debug("Plan step %d has no tool; skipping sentinel", index + 1)
+            continue
+        if tool.strip().lower() in _SENTINEL_TOOLS:
+            logger.debug("Plan step %d names %r; skipping sentinel",
+                         index + 1, tool)
+            continue
         args = entry.get("args", {})
         if not isinstance(args, dict):
             args = {}
@@ -282,9 +340,27 @@ class Planner:
             self.llm_calls += 1
 
             nodes, error = parse_plan(response.content)
+            pruned: list[str] = []
+            if not error:
+                nodes, pruned = prune_uncallable(nodes, registry)
+                if pruned:
+                    logger.warning(
+                        "Plan named %d tool(s) that do not exist (%s); dropped "
+                        "them and kept the %d real node(s)",
+                        len(pruned), ", ".join(sorted(set(pruned))), len(nodes),
+                    )
             problems = [error] if error else validate_plan(nodes, registry)
+            # Only when pruning emptied it. An empty plan the model *meant*
+            # to be empty is legitimate - it means "no tools needed" - and the
+            # enforcer still permits read-only calls against it. Conflating
+            # the two would reject a correct plan for a task that needs no
+            # tools, which a test caught immediately.
+            if not problems and not nodes and pruned:
+                problems = ["every step named a tool that does not exist"]
             if not problems:
-                graph = ToolDependencyGraph(nodes=nodes, raw=response.content)
+                graph = ToolDependencyGraph(
+                    nodes=nodes, raw=response.content, pruned=pruned
+                )
                 logger.info(
                     "Plan accepted: %d node(s) over %s",
                     len(nodes), sorted(graph.tools()) or "no tools",

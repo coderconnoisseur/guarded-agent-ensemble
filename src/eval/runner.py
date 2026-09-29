@@ -345,6 +345,7 @@ def run_case(
         plan_expansions=(list(enforcement.expansions) if enforcement else []),
         plan_rejections=([t for t, _ in enforcement.rejections] if enforcement else []),
         plan_degraded=(enforcement.graph.degraded if enforcement else False),
+        plan_pruned=(list(enforcement.graph.pruned) if enforcement else []),
         misalignment_expected=case.expects.misalignment_expected,
         checkpoint_label=case.expects.checkpoint_label,
         # `misalignment_ran` distinguishes "the module was off" from "it was on
