@@ -109,6 +109,29 @@ def check_reachable(model: str) -> tuple[bool, str]:
     return True, f"server is up and {model} is present"
 
 
+def warm_up(client: LLMClient, model: str) -> float:
+    """Load the model into VRAM, and return how long that took.
+
+    WHY THIS EXISTS, AND WHY IT IS NOT A MICRO-OPTIMISATION. Without it the
+    first timed call includes model load, and the probe reports that as
+    inference latency. Measured: qwen2.5:3b timed 52.6s on its first call and
+    3.3s warm - a 16x error, in the direction that would have retired the
+    fastest candidate the project has. The probe existed to stop a wrong
+    decision and briefly caused one.
+
+    The load time is returned rather than discarded because it is real: an
+    eval run that swaps between arms pays it per switch.
+    """
+    started = time.monotonic()
+    try:
+        client.chat([{"role": "user", "content": "hi"}], model=model, max_tokens=8)
+    except LLMError:
+        # Reachability already passed, so a failure here is the model's
+        # problem and the real gates below will report it properly.
+        pass
+    return time.monotonic() - started
+
+
 def check_react_protocol(client: LLMClient, model: str) -> tuple[bool, str, str]:
     """Does the model emit a reply the agent loop can parse (CLAUDE.md §5.3)?
 
@@ -175,6 +198,10 @@ def probe(client: LLMClient, model: str) -> bool:
     if not ok:
         return False
 
+    load_s = warm_up(client, model)
+    print(f"  [----] model load      - {load_s:.1f}s into VRAM (excluded from "
+          f"the timings below)")
+
     started = time.monotonic()
     ok_react, detail, excerpt = check_react_protocol(client, model)
     react_s = time.monotonic() - started
@@ -195,9 +222,11 @@ def probe(client: LLMClient, model: str) -> bool:
     print()
     if passed:
         print(f"  {model} can speak the protocol. It is a usable backbone arm.")
-        print(f"  Roughly {react_s:.0f}s per agent turn and {tdg_s:.0f}s per plan; "
-              f"at ~11.6 calls/case that is ~{(react_s * 11.6) / 60:.0f} min "
-              f"per Condition B case.")
+        print(f"  Warm: ~{react_s:.0f}s per agent turn, ~{tdg_s:.0f}s per plan. "
+              f"At the measured 32.7 calls/case across all five")
+        print(f"  ablation rows, 39 cases projects to "
+              f"~{(react_s * 32.7 * 39) / 3600:.1f}h at N=1 "
+              f"(the hosted arm is ~10.6h).")
     elif not ok_tdg and ok_react:
         print(f"  {model} talks but cannot plan. This is the failure that "
               f"retired liquid/lfm-2.5-2.6b:")

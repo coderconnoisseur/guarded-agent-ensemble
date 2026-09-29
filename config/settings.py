@@ -337,7 +337,20 @@ OLLAMA_BASE_URL = _setting("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 # Condition B at all. So nothing below ~3B belongs here however well it fits
 # in VRAM.
 #
-#   1. qwen3:4b       ~2.5GB at Q4_K_M. FIRST CHOICE, and the reason is
+#   MEASURED, warm, four back-to-back calls on the real ReAct prompt:
+#   qwen2.5:3b 3.3s/call (0ch reasoning) vs qwen3:4b 62.3s/call (3524ch).
+#   The thinking block is the entire difference. Projected over the five-row
+#   frozen ablation at 39 cases: 1.17h vs 22.07h, against 10.63h hosted.
+#
+#   1. qwen2.5:3b     ~1.9GB. FIRST CHOICE on that 19x. No thinking mode
+#                     (Ollama reports capabilities ['completion','tools'],
+#                     without 'thinking'), roomier on a 4GB card, and it
+#                     emitted a correct 2-node TDG. The cost is that qwen2.5
+#                     is a different generation from BACKBONE_MODEL, so a
+#                     two-arm comparison confounds scale with training recipe
+#                     - the report must say so rather than imply a clean
+#                     scale ablation.
+#   2. qwen3:4b       ~2.5GB at Q4_K_M. Was first choice, and the reason was
 #                     experimental design rather than quality: BACKBONE_MODEL
 #                     is qwen/qwen3.8-27b, so this holds the model family and
 #                     generation constant and varies only *scale*. Any
@@ -345,15 +358,18 @@ OLLAMA_BASE_URL = _setting("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 #                     to capability rather than to a different training
 #                     recipe. Needs thinking mode off — see
 #                     OLLAMA_MIN_MAX_TOKENS.
-#   2. qwen2.5:3b     ~1.9GB. Fallback: no thinking mode to fight, reliably
+#   -  (qwen2.5 note moved above)  Fallback text retained: reliably
 #                     good at structured JSON, and roomier on a 4GB card.
 #                     Weaker family-match argument, lower risk.
-#   3. llama3.2:3b    ~2.0GB. Second fallback. Different family entirely, so
+#   3. llama3.2:3b    ~2.0GB. Third choice. Different family entirely, so
 #                     a result from it confounds scale with training recipe —
 #                     usable as a third arm, not as the comparison.
+# REORDERED 2026-09-29 after probing both. qwen3:4b led on experimental
+# design (same family/generation as BACKBONE_MODEL, so only scale varies);
+# qwen2.5:3b leads now on a 19x measured latency difference. See HANDOFF §10.7.
 OLLAMA_MODEL_CHAIN = [
-    "qwen3:4b",
     "qwen2.5:3b",
+    "qwen3:4b",
     "llama3.2:3b",
 ]
 

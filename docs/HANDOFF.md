@@ -1,7 +1,7 @@
 # Handoff — Guarded Agent Ensemble
 
 **Updated:** 2026-09-27 · **Repo:** https://github.com/coderconnoisseur/guarded-agent-ensemble (public)
-**Branch:** `master` · **38 commits** · **631 tests passing**
+**Branch:** `master` · **39 commits** · **632 tests passing**
 **Phases 0–5 complete**, plus the §5.2 coverage expansion, the §5.1
 frozen-suite ablation, confidence intervals on every rate (§5.5), the
 external-benchmark work (§5.2d/e) and the replay harness (§5.6).
@@ -89,7 +89,7 @@ python demos/frozen_ablation.py                # all five rows, one frozen suite
 python demos/phase6_full_eval.py               # PHASE 6: results/report.md, free
 python demos/phase6_full_eval.py --dry-run     # price the modes that cost requests
 python demos/local_probe.py                    # can a local model be the backbone?
-python -m pytest                               # 631 tests, all offline
+python -m pytest                               # 632 tests, all offline
 ```
 
 ---
@@ -1140,3 +1140,71 @@ only ever raises and never lowers a caller's budget.
 One `empty content, falling back to reasoning` warning still appears
 occasionally at 1600, so the truncation is reduced rather than eliminated.
 Worth watching if a grid run produces unparseable steps.
+
+### 10.7 RESOLVED, 2026-09-29: qwen2.5:3b is the local arm, and it is 9x faster than hosted
+
+Probed after §10.5 predicted it. All three gates pass, with a correct 2-node
+plan (`files.read` -> `comms.send_email`). Warm latency, four back-to-back
+calls on the real ReAct prompt, both models at `max_tokens=1600`:
+
+| model | cold (first call) | warm mean | reasoning | content parsed |
+|---|---|---|---|---|
+| **qwen2.5:3b** | 3.4 s | **3.3 s** | **0 ch** | 4/4 |
+| qwen3:4b | 50.2 s | 62.3 s | 3524 ch | 4/4 |
+
+**19x.** The thinking block was the entire cost, now measured rather than
+suspected. Ollama's own metadata says it structurally: qwen2.5:3b reports
+`capabilities: ['completion', 'tools']` while qwen3:4b adds `'thinking'`.
+
+Projected five-row frozen ablation, 39 cases, at the measured 32.7 calls/case:
+
+| arm | N=1 | N=3 |
+|---|---|---|
+| **qwen2.5:3b (local)** | **1.17 h** | **3.51 h** |
+| qwen3.8-27b (Groq, rate-limited) | 10.63 h | 31.88 h |
+| qwen3:4b (local) | 22.07 h | 66.21 h |
+
+**qwen2.5:3b is 9.1x faster than the hosted arm; qwen3:4b is 2.1x slower.**
+So §10.1's throughput argument is correct after all — but only for a
+non-reasoning model, and §10.4's refutation of it stands for qwen3:4b. Both
+belong in the record; the variable was never "local", it was "thinking".
+
+What this unlocks, all previously out of reach:
+
+- **N=3 costs 3.5 h**, so §10 of the Phase 6 report no longer has to open with
+  "N=1, as §5.4 permits".
+- **`LAT` becomes measurable and meaningful.** There is no rate limiter, so
+  nothing has to be subtracted out of the wall clock, and §9.3's bracket
+  mismatch stops being a blocker for the thing it blocked.
+- **A bigger suite is affordable**, which is what `ASR_inj` needs: n=65 at a
+  baseline of 0.07 (`stats.required_n`).
+
+The cost is the family-match tidiness: `BACKBONE_MODEL` is
+`qwen/qwen3.8-27b`, so qwen3:4b would have held generation constant and varied
+only scale. qwen2.5 is a different generation, so a two-arm comparison
+confounds scale with training recipe. **Say so in the report** rather than
+implying a clean scale ablation. It is the right trade — a confounded
+comparison that can afford N=3 beats a clean one that cannot run — but it is a
+trade, not a free win.
+
+`OLLAMA_MODEL_CHAIN` is reordered to put `qwen2.5:3b` first.
+
+### 10.8 The probe had the bug it was built to prevent
+
+qwen2.5:3b's **first** probe reported 52.6 s per agent turn, against 4.5 s for
+the *longer* planning prompt in the same run. Both cannot be inference. The
+first timed call was paying **model load into VRAM**, and the probe counted it
+as latency.
+
+That is a 16x error, in the direction that would have retired the fastest
+candidate the project has found. The probe existed to stop exactly one class
+of wrong decision and briefly caused one.
+
+Fixed: `warm_up()` loads the model before anything is timed, and the load time
+is printed separately rather than discarded, because it is real — an eval that
+swaps arms pays it per switch (measured 8.5 s for qwen2.5:3b).
+
+The general lesson is the one this file keeps relearning: **a timing number
+with nothing bracketing it is not a measurement.** The same shape produced the
+LAT failures in §9.3 — rate-limiter sleep inside the timed region, and an
+agent-loop timer read against a whole-case counter.

@@ -134,12 +134,30 @@ class TestTheHostedArmIsUnaffected:
         for model in settings.OLLAMA_MODEL_CHAIN:
             assert not any(model.lower().endswith(s) for s in banned), model
 
-    def test_first_candidate_matches_the_pinned_model_family(self):
-        """Holding family and generation constant and varying only scale is
-        what makes a two-backbone grid attributable to capability rather than
-        to a different training recipe."""
+    def test_a_same_family_candidate_is_still_available(self):
+        """The clean scale comparison must remain reachable even though it is
+        no longer first.
+
+        qwen3:4b led originally because it shares BACKBONE_MODEL's family and
+        generation, so a two-arm grid would vary only scale. It was demoted on
+        a measured 19x latency difference (HANDOFF §10.7) - qwen2.5:3b has no
+        thinking mode and runs at 3.3s/call against 62.3s. That trade
+        confounds scale with training recipe, which the report has to state;
+        it does not mean the clean comparison should become unreachable, so
+        the same-family model stays in the chain.
+        """
         family = settings.BACKBONE_MODEL.split("/")[-1][:5]  # "qwen3"
-        assert settings.OLLAMA_MODEL_CHAIN[0].startswith(family)
+        assert any(m.startswith(family) for m in settings.OLLAMA_MODEL_CHAIN), (
+            f"no {family}* candidate left in OLLAMA_MODEL_CHAIN; the "
+            f"scale-only comparison against {settings.BACKBONE_MODEL} would "
+            f"no longer be runnable at all"
+        )
+
+    def test_the_default_candidate_is_the_fast_one(self):
+        """Guards the reordering. Putting a reasoning model first again would
+        turn the 1.2h ablation back into a 22h one without failing anything
+        else in this suite."""
+        assert settings.OLLAMA_MODEL_CHAIN[0] == "qwen2.5:3b"
 
 
 class TestLocalTimeout:
