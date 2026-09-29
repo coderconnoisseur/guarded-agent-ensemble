@@ -223,10 +223,10 @@ class TestGeneratedCasesContributeTriples:
 
         (tmp_path / "fake.json").write_text(_json.dumps({
             "condition": "A", "suites": ["misalignment"], "generated_at": "x",
-            "backbone_model": "m",
+            "backbone_model": settings.BACKBONE_MODEL,
             "results": [{
                 "test_case_id": case.id, "condition": "A", "run_index": 0,
-                "backbone_model": "m", "timestamp": "x", "passed": False,
+                "backbone_model": settings.BACKBONE_MODEL, "timestamp": "x", "passed": False,
                 "scenario": case.scenario,
                 "transcript": [
                     {"role": "user", "content": case.prompt},
@@ -242,3 +242,78 @@ class TestGeneratedCasesContributeTriples:
         triples = collect_triples(tmp_path)
         assert triples, f"{case.id} produced no triple"
         assert triples[0].label == "misaligned"
+
+
+class TestReplayCorpusIsSingleBackbone:
+    """A trajectory records how ONE model behaved.
+
+    Pooling trajectories from two backbones into one replay corpus measures
+    neither, and the mixing is invisible in the resulting MF1 - the same
+    hazard `ablation_table.load()` already guards against for the table.
+
+    Measured: adding a 3B local arm pushed the corpus from a balanced split to
+    13 dev / 4 held-out positives, because the new rows hashed into dev. Three
+    prompt variants have already been measured against this corpus
+    (HANDOFF §5.2f), so a corpus that shifts under it invalidates the
+    comparison between them.
+    """
+
+    def _write(self, directory, name, backbone, case_id, tool):
+        import json as _json
+
+        (directory / name).write_text(_json.dumps({
+            "condition": "A", "suites": ["misalignment"], "generated_at": "x",
+            "backbone_model": backbone,
+            "results": [{
+                "test_case_id": case_id, "condition": "A", "run_index": 0,
+                "backbone_model": backbone, "timestamp": "x", "passed": False,
+                "scenario": "workspace",
+                "transcript": [
+                    {"role": "user", "content": "do the thing"},
+                    {"role": "assistant",
+                     "content": 'Action: {"tool": "%s", "args": {"path": "x"}}' % tool},
+                    {"role": "tool", "content": "done"},
+                ],
+                "outcome": {"refused": False, "task_completed": False,
+                            "latency_ms": 1, "num_llm_calls": 1},
+            }],
+        }), encoding="utf-8")
+
+    def _labelled_case(self):
+        from src.eval.schemas import load_suites
+
+        for case in load_suites(settings.TESTSUITES_DIR):
+            if case.expects.checkpoint_label:
+                tool = next((c.tool for c in case.grading.checks if c.tool), None)
+                if tool:
+                    return case, tool
+        raise AssertionError("no labelled case with a tool check")
+
+    def test_the_pinned_backbone_contributes(self, tmp_path):
+        case, tool = self._labelled_case()
+        self._write(tmp_path, "pinned.json", settings.BACKBONE_MODEL, case.id, tool)
+        assert collect_triples(tmp_path), "pinned-backbone run produced no triple"
+
+    def test_another_backbone_is_excluded(self, tmp_path):
+        case, tool = self._labelled_case()
+        self._write(tmp_path, "other.json", "some-other/model-3b", case.id, tool)
+        assert collect_triples(tmp_path) == []
+
+    def test_a_foreign_arm_adds_nothing_to_a_pinned_corpus(self, tmp_path,
+                                                            tmp_path_factory):
+        """The property that matters: the corpus is identical whether or not a
+        second arm's results are sitting in the same directory."""
+        case, tool = self._labelled_case()
+
+        pinned_only = tmp_path_factory.mktemp("pinned_only")
+        self._write(pinned_only, "pinned.json", settings.BACKBONE_MODEL,
+                    case.id, tool)
+
+        self._write(tmp_path, "pinned.json", settings.BACKBONE_MODEL, case.id, tool)
+        self._write(tmp_path, "other.json", "some-other/model-3b", case.id, tool)
+
+        baseline = collect_triples(pinned_only)
+        mixed = collect_triples(tmp_path)
+        assert baseline, "the pinned row should contribute"
+        assert len(mixed) == len(baseline)
+        assert {t.key for t in mixed} == {t.key for t in baseline}

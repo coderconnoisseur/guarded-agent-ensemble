@@ -96,6 +96,17 @@ def collect_triples(
     rule `misalignment_macro_f1` applies, and for the same reason: an
     argument-dependent case has no fixed answer, so scoring a ruling on it
     would be circular.
+
+    **Pinned backbone only**, which is the same rule `ablation_table.load()`
+    enforces and for the same reason. A trajectory is a record of how one
+    model behaved; pooling trajectories from two backbones into one replay
+    corpus measures neither, and the mixing is invisible in an MF1.
+
+    This is not hypothetical: adding a 3B local arm silently pushed the
+    corpus from a balanced split to 13 dev / 4 held-out positives, because
+    the new rows hashed into dev. The split-stratification test caught it.
+    Without the filter, every future arm would perturb a corpus that three
+    prompt variants have already been measured against (HANDOFF §5.2f).
     """
     # Generated cases included. They resolved through `load_suites` alone
     # before, which excludes them by design - so the paired misalignment cases
@@ -115,6 +126,8 @@ def collect_triples(
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            continue
+        if settings.BACKBONE_MODEL not in (data.get("backbone_model") or ""):
             continue
         for row in data.get("results", []):
             case = cases.get(row.get("test_case_id", ""))

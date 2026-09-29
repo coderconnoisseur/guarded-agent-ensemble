@@ -116,6 +116,83 @@ def accept_row(label: str, path: Path, errored: list, total: int) -> bool:
     return False
 
 
+
+# A module that failed open on this share of its runs or more invalidates the
+# row, for the same reason an outage does.
+#
+# MEASURED, and it is the sharper version of the errored-case problem: the
+# Misalignment Checkpoint was handed model="qwen2.5:3b" while keeping the
+# configured provider "groq", which has no such model. Every judge call 404'd
+# into an LLMError and the checkpoint took its documented fail-open path 15
+# times in one 39-case run.
+#
+# Nothing looked wrong. `misalignment_ran` was True, no case errored, the row
+# wrote cleanly, and the ablation table reported that adding the checkpoint
+# changed nothing - which read as a finding about the module rather than a
+# finding about a typo. Failing open on a provider outage is deliberate
+# (HANDOFF §4); a row where it happened on 15 of 39 runs is not a measurement
+# OF that module, and the two have to be distinguishable from the outside.
+MAX_DEGRADED_SHARE = 0.10
+
+# (field that marks a degraded run, field that marks the module as active)
+_MODULE_HEALTH = [
+    ("Planner", "plan_degraded", "plan_ran"),
+    ("Misalignment Checkpoint", "misalignment_degraded", "misalignment_ran"),
+]
+
+
+def module_health_note(results: list) -> str:
+    """A note recording which modules failed open, for the row's own record.
+
+    Written into the snapshot rather than only printed, so a reader months
+    later can tell "this module changed nothing" from "this module never ran".
+    """
+    parts = []
+    for name, degraded_field, ran_field in _MODULE_HEALTH:
+        active = [r for r in results if getattr(r, ran_field, False)]
+        degraded = [r for r in active if getattr(r, degraded_field, False)]
+        if degraded:
+            parts.append(f"{name} failed open on {len(degraded)}/{len(active)} runs")
+    return ("DEGRADED: " + "; ".join(parts)) if parts else ""
+
+
+def accept_module_health(path: Path, results: list, accept: bool = False) -> bool:
+    """Whether every enabled defense actually ran, or quietly failed open.
+
+    `accept` is for the case where the degradation IS the finding - a
+    backbone too weak to emit a valid plan a quarter of the time is a real
+    property of that arm, not a fault to fix. It still prints, and the
+    caller stamps it into the row's notes, so the row can never be read
+    later as though the module had worked.
+    """
+    ok = True
+    for name, degraded_field, ran_field in _MODULE_HEALTH:
+        active = [r for r in results if getattr(r, ran_field, False)]
+        if not active:
+            continue
+        degraded = [r for r in active if getattr(r, degraded_field, False)]
+        if not degraded:
+            continue
+        share = len(degraded) / len(active)
+        if share < MAX_DEGRADED_SHARE:
+            print(f"\n  NOTE: {name} failed open on {len(degraded)}/"
+                  f"{len(active)} run(s) ({share:.0%}) - under the "
+                  f"{MAX_DEGRADED_SHARE:.0%} threshold, row kept.")
+            continue
+        ok = False
+        print(f"\n  REFUSING TO WRITE {path.name}")
+        print(f"  {name} failed open on {len(degraded)}/{len(active)} runs "
+              f"({share:.0%}), over the {MAX_DEGRADED_SHARE:.0%} threshold.")
+        print()
+        print("  The module was wired in and recorded as running, but it took")
+        print("  its fail-open path instead of ruling. A row like this reads as")
+        print("  'the module changed nothing', which is a claim about the")
+        print("  module rather than about whatever broke it. Usual cause: the")
+        print("  judge model and its provider disagree - see")
+        print("  MisalignmentCheckpoint.__init__.")
+    return True if accept else ok
+
+
 def banner(title: str) -> None:
     print(f"\n{RULE}\n{title}\n{RULE}", flush=True)
 
@@ -202,6 +279,11 @@ def main() -> int:
     parser.add_argument("--model", default=settings.BACKBONE_MODEL)
     parser.add_argument("--dry-run", action="store_true",
                         help="Print the cost estimate and exit.")
+    parser.add_argument("--accept-degraded", action="store_true",
+                        help="Write a row even when a module failed open on "
+                             "many runs. For when the degradation is a "
+                             "measured property of the backbone rather than "
+                             "a fault; it is stamped into the row notes.")
     parser.add_argument("--force", action="store_true",
                         help="Re-run rows already written.")
     parser.add_argument("--verbose", "-v", action="store_true")
@@ -268,6 +350,12 @@ def main() -> int:
             errored = [r for r in report.results if r.error]
             if not accept_row(label, path, errored, len(report.results)):
                 return 1
+            degraded_note = module_health_note(report.results)
+            if not accept_module_health(path, report.results,
+                                        accept=args.accept_degraded):
+                return 1
+            if degraded_note:
+                report.notes.append(degraded_note)
 
             report.write(path)
             print(f"\n  Wrote {path.name} "

@@ -265,7 +265,29 @@ class MisalignmentCheckpoint:
     ) -> None:
         self.client = client
         self.model = model or settings.MISALIGNMENT_JUDGE_MODEL
-        self.provider = provider or settings.MISALIGNMENT_JUDGE_PROVIDER
+        # A MODEL AND ITS PROVIDER TRAVEL TOGETHER, OR THE JUDGE SILENTLY DIES.
+        #
+        # `MISALIGNMENT_JUDGE_PROVIDER` describes where
+        # `MISALIGNMENT_JUDGE_MODEL` lives. Applying it to a *different* model
+        # a caller passed in asks one backend for another backend's model.
+        #
+        # Measured: ConditionB(model="qwen2.5:3b") kept the configured
+        # provider "groq", Groq has no such model, every judge call 404'd into
+        # an LLMError, and the checkpoint took its fail-open path 15 times in
+        # one 39-case run. Nothing crashed - `misalignment_ran` was True, the
+        # row wrote cleanly with 0 errored cases, and the ablation reported
+        # that the checkpoint changed nothing. It had never run at all.
+        #
+        # So the configured provider is used only for the configured model.
+        # For any other model, None lets the client resolve the provider from
+        # the chain, which is what the Planner already does implicitly by
+        # taking no provider argument.
+        if provider:
+            self.provider = provider
+        elif self.model == settings.MISALIGNMENT_JUDGE_MODEL:
+            self.provider = settings.MISALIGNMENT_JUDGE_PROVIDER
+        else:
+            self.provider = None
 
     def _ask(self, prompt: str) -> str:
         response = self.client.chat(
