@@ -68,11 +68,29 @@ def banner(title: str) -> None:
     print(f"\n{RULE}\n{title}\n{RULE}", flush=True)
 
 
-def row_path(stem: str) -> Path:
+def row_path(stem: str, model: str = "") -> Path:
+    """Where one row is written, scoped by backbone when it is not the pinned one.
+
+    THE FILENAME MUST CARRY THE MODEL OR THIS COMMAND DESTROYS ITS OWN
+    EVIDENCE. These stems used to be fixed, so running the ablation against a
+    second backbone would overwrite the pinned-backbone snapshots that the
+    whole Phase 6 report is computed from - and `--force` would do it
+    silently, in five files, with no way back short of a ~10h re-run.
+
+    That is not hypothetical: the same class of bug already overwrote the
+    Condition A baseline twice (HANDOFF §1), which is why
+    `runner.default_report_name()` appends the scope of a narrowed run. This
+    is the same rule applied to the backbone.
+
+    The pinned model keeps the bare name, so existing files and
+    `ablation_table.py`'s patterns are untouched.
+    """
+    if model and model != settings.BACKBONE_MODEL:
+        return settings.RESULTS_DIR / f"{stem}_{runner._slug(model)}.json"
     return settings.RESULTS_DIR / f"{stem}.json"
 
 
-def estimate(cases: list[TestCase], client: LLMClient) -> None:
+def estimate(cases: list[TestCase], client: LLMClient, model: str = "") -> None:
     """Print what this will cost before spending any of it."""
     from src.tools.registry import build_registry
 
@@ -84,21 +102,47 @@ def estimate(cases: list[TestCase], client: LLMClient) -> None:
         for scenario, group in by_scenario.items()
     )
 
-    rate = settings.GROQ_RATE_LIMIT_PER_MINUTE
+    # SECONDS PER CALL, not a rate limit, because the two arms are bound by
+    # completely different things and using one number for both is how a
+    # ~1.2h job got priced at "0.0h".
+    #
+    #   hosted: a request every 30s because the limiter says so (2/min), and
+    #           the model's own latency disappears inside that wait.
+    #   local:  no limiter at all - the ceiling is this machine's
+    #           tokens/second, measured at 3.3s/call for qwen2.5:3b.
+    #
+    # Quoting Groq's 2/min for a local run would price it at ~10h; quoting
+    # Ollama's nominal 600/min would price it at 0.0h. Both are wrong in the
+    # direction that changes the decision.
+    provider = next(
+        (prov for prov, name in settings.PROVIDER_CHAIN if name == model), "groq"
+    )
+    if provider == "ollama":
+        seconds_per_call = settings.OLLAMA_MEASURED_SECONDS_PER_CALL
+        basis = (f"~{seconds_per_call:.1f}s/call measured on this machine; "
+                 f"no provider quota")
+    else:
+        rate = settings.PROVIDER_LIMITS.get(provider, {}).get(
+            "rate_limit_per_minute", settings.GROQ_RATE_LIMIT_PER_MINUTE
+        )
+        seconds_per_call = 60.0 / rate
+        basis = (f"{rate} requests/minute, so {seconds_per_call:.0f}s/call - the "
+                 f"rate limit binds, not the {settings.GROQ_DAILY_REQUEST_CAP}/day cap")
+
     total = 0.0
     print(f"  {len(cases)} frozen cases, {cached} starting from cache")
     print(f"\n  {'row':46} {'est. calls':>11} {'est. time':>10}")
     for (label, stem, _), per_case in zip(ROWS, MEASURED_CALLS_PER_CASE):
-        if row_path(stem).exists():
+        if row_path(stem, model).exists():
             print(f"  {label:46} {'(done)':>11} {'-':>10}")
             continue
         calls = len(cases) * per_case
         total += calls
-        print(f"  {label:46} {calls:>11.0f} {calls / rate / 60:>9.1f}h")
+        print(f"  {label:46} {calls:>11.0f} "
+              f"{calls * seconds_per_call / 3600:>9.1f}h")
     print(f"  {'TOTAL (upper bound, ignores cache)':46} "
-          f"{total:>11.0f} {total / rate / 60:>9.1f}h")
-    print(f"\n  Bound by {rate} requests/minute, not by the "
-          f"{settings.GROQ_DAILY_REQUEST_CAP}/day cap.")
+          f"{total:>11.0f} {total * seconds_per_call / 3600:>9.1f}h")
+    print(f"\n  Backbone {model or settings.BACKBONE_MODEL} via {provider}: {basis}.")
 
 
 def main() -> int:
@@ -131,12 +175,12 @@ def main() -> int:
         print(f"  Suites     : {', '.join(sorted({c.suite for c in cases}))}")
 
         banner("COST")
-        estimate(cases, client)
+        estimate(cases, client, args.model)
         if args.dry_run:
             return 0
 
         for index, (label, stem, modules) in enumerate(ROWS, start=1):
-            path = row_path(stem)
+            path = row_path(stem, args.model)
             if path.exists() and not args.force:
                 print(f"\n  [{index}/5] {label} - already on disk, skipping "
                       f"({path.name})", flush=True)

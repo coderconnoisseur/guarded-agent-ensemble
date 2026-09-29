@@ -395,6 +395,20 @@ OLLAMA_MODEL_CHAIN = [
 # Action:/Final: parser sees prose. See OllamaProvider for the table.
 OLLAMA_MIN_MAX_TOKENS = int(_setting("OLLAMA_MIN_MAX_TOKENS", "1600") or 1600)
 
+# Seconds per LLM call on the local arm, for cost estimates only.
+#
+# MEASURED 2026-09-29, qwen2.5:3b on a GTX 1650 Ti (4GB), four back-to-back
+# calls on the real ReAct prompt after a warm-up: 3.4, 3.4, 3.2, 3.2s.
+# qwen3:4b on the same prompt measured 62.3s - the difference is entirely its
+# thinking block, so this number is per-model and NOT a property of "local".
+#
+# It exists because a rate limit is the wrong model for a local arm: there is
+# no quota, and the ceiling is this machine's tokens/second. Estimating from
+# OLLAMA_RATE_LIMIT_PER_MINUTE priced a ~1.2h job at "0.0h".
+OLLAMA_MEASURED_SECONDS_PER_CALL = float(
+    _setting("OLLAMA_MEASURED_SECONDS_PER_CALL", "3.3") or 3.3
+)
+
 # No provider quota and no token-per-minute ceiling: the only limits are the
 # machine's. Both numbers exist purely so the shared budget/limiter machinery
 # has something to read — they are not measurements of anything.

@@ -310,3 +310,41 @@ class TestProbeUsesTheRealParser:
         ok, detail, _ = self._check(monkeypatch, "Final: done")
         assert ok is True
         assert "Final" in detail
+
+
+class TestFrozenAblationFilenamesCarryTheBackbone:
+    """Running the ablation on a second arm must not destroy the first one.
+
+    The stems were fixed strings, so a local-backbone run would have
+    overwritten the five pinned-backbone snapshots the entire Phase 6 report
+    is computed from - and `--force` would have done it silently, in five
+    files, recoverable only by a ~10h re-run.
+
+    The same class of bug already overwrote the Condition A baseline twice
+    (HANDOFF §1). This is the guard.
+    """
+
+    def _row_path(self, stem, model=""):
+        from demos.frozen_ablation import row_path
+
+        return row_path(stem, model).name
+
+    def test_the_pinned_backbone_keeps_the_bare_name(self):
+        """Existing files and ablation_table's patterns must not move."""
+        assert self._row_path("frozen_1_condition_a", settings.BACKBONE_MODEL) == (
+            "frozen_1_condition_a.json"
+        )
+        assert self._row_path("frozen_1_condition_a") == "frozen_1_condition_a.json"
+
+    def test_another_backbone_gets_its_own_file(self):
+        name = self._row_path("frozen_1_condition_a", "qwen2.5:3b")
+        assert name != "frozen_1_condition_a.json"
+        assert "qwen2" in name
+
+    def test_two_backbones_never_collide(self):
+        for stem in ("frozen_1_condition_a", "frozen_5_everything"):
+            names = {
+                self._row_path(stem, m)
+                for m in (settings.BACKBONE_MODEL, "qwen2.5:3b", "qwen3:4b")
+            }
+            assert len(names) == 3, f"{stem} collides across backbones: {names}"

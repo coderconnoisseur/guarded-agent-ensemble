@@ -1,7 +1,7 @@
 # Handoff — Guarded Agent Ensemble
 
 **Updated:** 2026-09-27 · **Repo:** https://github.com/coderconnoisseur/guarded-agent-ensemble (public)
-**Branch:** `master` · **39 commits** · **632 tests passing**
+**Branch:** `master` · **40 commits** · **635 tests passing**
 **Phases 0–5 complete**, plus the §5.2 coverage expansion, the §5.1
 frozen-suite ablation, confidence intervals on every rate (§5.5), the
 external-benchmark work (§5.2d/e) and the replay harness (§5.6).
@@ -89,7 +89,7 @@ python demos/frozen_ablation.py                # all five rows, one frozen suite
 python demos/phase6_full_eval.py               # PHASE 6: results/report.md, free
 python demos/phase6_full_eval.py --dry-run     # price the modes that cost requests
 python demos/local_probe.py                    # can a local model be the backbone?
-python -m pytest                               # 632 tests, all offline
+python -m pytest                               # 635 tests, all offline
 ```
 
 ---
