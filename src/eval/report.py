@@ -90,6 +90,11 @@ REFERENCE_CAVEAT = (
     "project supports.*"
 )
 
+def _slug(text: str) -> str:
+    """Filesystem-safe backbone name, matching runner._slug."""
+    return "".join(c if c.isalnum() else "-" for c in text).strip("-")
+
+
 METRIC_ORDER = ["ASR_inj", "BU", "UA", "HS", "MF1", "LAT", "DIV_ASR", "OverRefusal"]
 
 METRIC_BLURB = {
@@ -144,7 +149,7 @@ def refusal_acceptable_ids() -> set[str]:
 
 
 def load_snapshot(
-    label: str, stem: str, results_dir: Path | None = None
+    label: str, stem: str, results_dir: Path | None = None, backbone: str = ""
 ) -> Snapshot | None:
     """Load one snapshot, or None if it was never run.
 
@@ -156,14 +161,26 @@ def load_snapshot(
     than answering with the wrong model.
     """
     directory = results_dir or settings.RESULTS_DIR
-    path = directory / f"{stem}.json"
-    if not path.exists():
+    wanted = backbone or settings.BACKBONE_MODEL
+    # A second arm writes backbone-scoped filenames (frozen_N_x_<slug>.json),
+    # so the bare stem is tried first and the glob catches the scoped ones.
+    # The backbone check below is what actually decides, not the filename.
+    candidates = [directory / f"{stem}.json", *sorted(directory.glob(f"{stem}_*.json"))]
+    path = next((c for c in candidates if c.exists()), None)
+    if path is None:
         return None
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        probe = SuiteReport.model_validate_json(candidate.read_text(encoding="utf-8"))
+        if wanted in probe.backbone_model:
+            path = candidate
+            break
     report = SuiteReport.model_validate_json(path.read_text(encoding="utf-8"))
-    if settings.BACKBONE_MODEL not in report.backbone_model:
+    if wanted not in report.backbone_model:
         logger.warning(
-            "ignoring %s: backbone %r is not the pinned %r",
-            path.name, report.backbone_model, settings.BACKBONE_MODEL,
+            "ignoring %s: backbone %r is not %r",
+            path.name, report.backbone_model, wanted,
         )
         return None
     return Snapshot(
@@ -192,13 +209,28 @@ def _gai_cell(result: scorer.GAIResult) -> str:
     return f"**{result.value:.3f}** [{result.low:.3f}–{result.high:.3f}]"
 
 
-def build_report(results_dir: Path | None = None, out: Path | None = None) -> Path:
-    """Render the whole Phase 6 report to `results/report.md`."""
+def build_report(
+    results_dir: Path | None = None,
+    out: Path | None = None,
+    backbone: str = "",
+) -> Path:
+    """Render the whole Phase 6 report.
+
+    `backbone` selects which arm to report on. It never mixes arms - every row
+    is checked against the chosen model and dropped otherwise - so a
+    two-backbone project produces two reports rather than one confused table.
+    """
     directory = results_dir or settings.RESULTS_DIR
-    destination = out or (directory / "report.md")
+    wanted = backbone or settings.BACKBONE_MODEL
+    if out is not None:
+        destination = out
+    elif backbone and backbone != settings.BACKBONE_MODEL:
+        destination = directory / f"report_{_slug(backbone)}.md"
+    else:
+        destination = directory / "report.md"
 
     ablation = [
-        s for s in (load_snapshot(label, stem, directory)
+        s for s in (load_snapshot(label, stem, directory, wanted)
                     for label, stem in ABLATION_ROWS)
         if s is not None
     ]
@@ -225,13 +257,13 @@ def build_report(results_dir: Path | None = None, out: Path | None = None) -> Pa
     lines: list[str] = []
     write = lines.append
 
-    _header(write, ablation, condition_a, condition_b)
+    _header(write, ablation, condition_a, condition_b, wanted)
     _headline(write, condition_a, condition_b, common)
     _submetrics(write, condition_a, condition_b)
     _significance(write, condition_a, condition_b)
     _sensitivity(write, condition_a, condition_b, common)
     _ablation(write, ablation)
-    _isolation(write, directory, ablation)
+    _isolation(write, directory, ablation, wanted)
     _latency_section(write, latency)
     _missing_terms(write, condition_b)
     _reference_table(write)
@@ -248,11 +280,34 @@ def build_report(results_dir: Path | None = None, out: Path | None = None) -> Pa
 # ---------------------------------------------------------------------------
 
 
-def _header(write, ablation, a, b) -> None:
+def _significant_metrics(a, b, alpha: float = 0.05) -> list[str]:
+    """Which A-vs-B differences clear `alpha`, computed rather than asserted.
+
+    The report used to state "almost none of the differences are
+    distinguishable from noise" unconditionally, which was true of the pinned
+    backbone and became false the moment a weaker one produced a baseline with
+    headroom. A claim about the data belongs in the data.
+    """
+    out = []
+    for name in ("ASR_inj", "HS", "OverRefusal"):
+        ma, mb = a.score.get(name), b.score.get(name)
+        if not (ma and mb and ma.defined and mb.defined
+                and ma.denominator and mb.denominator):
+            continue
+        p = fisher_exact_one_sided(mb.numerator, mb.denominator,
+                                   ma.numerator, ma.denominator)
+        if p < alpha:
+            out.append(name)
+    return out
+
+
+def _header(write, ablation, a, b, backbone: str = "") -> None:
     write("# Guarded Agent Ensemble — Phase 6 report")
     write("")
+    model = backbone or settings.BACKBONE_MODEL
+    pinned = " (pinned)" if model == settings.BACKBONE_MODEL else " (second arm)"
     write(f"**Generated:** {datetime.now(timezone.utc).date().isoformat()} · "
-          f"**Backbone:** `{settings.BACKBONE_MODEL}` (pinned) · "
+          f"**Backbone:** `{model}`{pinned} · "
           f"**Cases:** {a.n_cases} · **Repeats:** N=1")
     write("")
     write("One LLM agent, wrapped in four defense modules each adapted from a "
@@ -261,10 +316,19 @@ def _header(write, ablation, a, b) -> None:
           "`results/`; nothing here calls a model, and the source file behind "
           "each row is named in the last section.")
     write("")
-    write("**Read the headline and the limitations together.** The single most "
-          "important fact about these results is that almost none of the "
-          "differences are statistically distinguishable from noise — see "
-          "§3 and §10.")
+    significant = _significant_metrics(a, b)
+    if significant:
+        write(f"**Read the headline and the limitations together.** "
+              f"{', '.join('`' + m + '`' for m in significant)} "
+              f"{'is' if len(significant) == 1 else 'are'} statistically "
+              f"significant here (§3), which is not true of every arm this "
+              f"project has measured — see §10 for what that does and does not "
+              f"license.")
+    else:
+        write("**Read the headline and the limitations together.** The single "
+              "most important fact about these results is that almost none of "
+              "the differences are statistically distinguishable from noise — "
+              "see §3 and §10.")
     write("")
 
 
@@ -520,11 +584,11 @@ def _ablation(write, ablation) -> None:
     write("")
 
 
-def _isolation(write, directory, ablation) -> None:
+def _isolation(write, directory, ablation, backbone: str = "") -> None:
     write("## 6. Single-module isolation (§9.1 tier 2)")
     write("")
     snapshots = [
-        s for s in (load_snapshot(label, stem, directory)
+        s for s in (load_snapshot(label, stem, directory, backbone)
                     for label, stem in ISOLATION_ROWS)
         if s is not None
     ]
