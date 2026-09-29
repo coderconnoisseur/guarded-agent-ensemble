@@ -48,15 +48,15 @@ RULE = "=" * 112
 # snapshots still render, and the comparability gate below still refuses.
 SNAPSHOTS = [
     ("Condition A (no defenses)",
-     ["frozen_1_condition_a.json", "phase1_condition_a_*.json"]),
+     ["frozen_1_condition_a*.json", "phase1_condition_a_*.json"]),
     ("+ Harm Gate",
-     ["frozen_2_harm_gate.json", "ablation_phase2.json"]),
+     ["frozen_2_harm_gate*.json", "ablation_phase2.json"]),
     ("+ Harm Gate + Planner",
-     ["frozen_3_planner.json", "ablation_phase3.json"]),
+     ["frozen_3_planner*.json", "ablation_phase3.json"]),
     ("+ Harm Gate + Planner + Firewall/Quarantine",
-     ["frozen_4_firewall.json", "ablation_phase4.json"]),
+     ["frozen_4_firewall*.json", "ablation_phase4.json"]),
     ("+ everything (Condition B)",
-     ["frozen_5_everything.json", "ablation_phase5.json"]),
+     ["frozen_5_everything*.json", "ablation_phase5.json"]),
 ]
 
 
@@ -75,7 +75,7 @@ def rate(n: int, d: int) -> str:
     return format_rate(n, d)
 
 
-def load(pattern: str, root=None) -> tuple[dict | None, str]:
+def load(pattern: str, root=None, backbone: str = "") -> tuple[dict | None, str]:
     """The broadest snapshot matching `pattern`, plus the file it came from.
 
     "Broadest" rather than "last alphabetically", and the filename is returned
@@ -99,9 +99,10 @@ def load(pattern: str, root=None) -> tuple[dict | None, str]:
     # reporting 0.00. Dropping the row entirely is the honest outcome - it
     # says "this needs re-running" instead of quietly answering with the
     # wrong model.
+    wanted = backbone or settings.BACKBONE_MODEL
     pinned = [
         pair for pair in loaded
-        if settings.BACKBONE_MODEL in (pair[0].get("backbone_model") or "")
+        if wanted in (pair[0].get("backbone_model") or "")
     ]
     if not pinned:
         return None, ""
@@ -182,6 +183,11 @@ def metrics(rows: dict, cases: dict) -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Cumulative ablation table.")
+    parser.add_argument("--model", default=settings.BACKBONE_MODEL,
+                        help="Which backbone's snapshots to table. Defaults to "
+                             "the pinned model; pass a local model to read the "
+                             "second arm. Rows from other backbones are never "
+                             "mixed in, whichever is chosen.")
     parser.add_argument("--force-trend", action="store_true",
                         help="Print the trend even when case sets differ. Only "
                              "for inspection - never for the report.")
@@ -194,7 +200,7 @@ def main() -> int:
     for label, patterns in SNAPSHOTS:
         data, source = None, ""
         for pattern in patterns:
-            data, source = load(pattern)
+            data, source = load(pattern, backbone=args.model)
             if data is not None:
                 break
         if data is None:
@@ -243,7 +249,7 @@ def main() -> int:
     print("  0.07 significance needs n=65, at 0.40 it needs n=9.")
 
     banner("EVIDENCE")
-    print(f"  Backbone: {settings.BACKBONE_MODEL} (pinned). Snapshots from any")
+    print(f"  Backbone: {args.model}. Snapshots from any")
     print("  other model are ignored, not mixed in. Each row is the broadest")
     print("  matching snapshot for that configuration.")
     for label, _, ids in loaded:
