@@ -348,3 +348,45 @@ class TestFrozenAblationFilenamesCarryTheBackbone:
                 for m in (settings.BACKBONE_MODEL, "qwen2.5:3b", "qwen3:4b")
             }
             assert len(names) == 3, f"{stem} collides across backbones: {names}"
+
+
+class TestFrozenAblationRefusesOutageRows:
+    """An errored case is not a failed case - it carries no evidence.
+
+    Measured the hard way: the local Ollama server crashed partway through a
+    Condition A run, 15 of 39 cases errored with ConnectError (14 of them
+    before making a single LLM call), and the row was written anyway reporting
+    "12/39 passed". Because a row already on disk is skipped without --force,
+    a resumed run would have built the whole five-row trend on top of it.
+    """
+
+    class _Err:
+        def __init__(self, error):
+            self.error = error
+
+    def _accept(self, errored, total=39):
+        from pathlib import Path
+
+        from demos.frozen_ablation import accept_row
+
+        return accept_row("row", Path("r.json"), errored, total)
+
+    def test_a_clean_row_is_written(self):
+        assert self._accept([]) is True
+
+    def test_one_transient_error_in_39_is_noise(self):
+        assert self._accept([self._Err("LLMError: hiccup")]) is True
+
+    def test_an_outage_row_is_refused(self):
+        errs = [self._Err("AllModelsFailedError: ConnectError")] * 15
+        assert self._accept(errs) is False
+
+    def test_the_threshold_sits_between_those_two(self):
+        from demos.frozen_ablation import MAX_ERROR_SHARE
+
+        assert 0 < MAX_ERROR_SHARE < 0.5
+        assert self._accept([self._Err("x")] * 3) is True      # 8%
+        assert self._accept([self._Err("x")] * 5) is False     # 13%
+
+    def test_an_empty_run_is_refused_rather_than_divided_by_zero(self):
+        assert self._accept([self._Err("x")], total=0) is False

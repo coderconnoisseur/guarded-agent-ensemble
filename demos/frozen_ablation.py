@@ -64,6 +64,58 @@ ROWS: list[tuple[str, str, set[str] | None]] = [
 MEASURED_CALLS_PER_CASE = [2.8, 2.3, 7.1, 8.9, 11.6]
 
 
+
+# A row with this share of errored cases or more is not written at all.
+#
+# MEASURED, the hard way: the local Ollama server crashed partway through a
+# Condition A run and 15 of 39 cases errored with ConnectError, 14 of them
+# before making a single LLM call. The row was written anyway, reported
+# "12/39 passed", and - because a row already on disk is skipped without
+# --force - a resumed run would have treated that as a finished measurement
+# and built a five-row trend on top of it.
+#
+# An errored case is not a failed case. It carries no evidence at all, so it
+# silently shrinks every denominator the scorer computes: `passed` drops,
+# ASR_inj and HS are taken over whatever survived, and nothing on the table
+# says the arm lost a third of its cases. That is precisely the silent-number
+# class this project keeps finding (HANDOFF §1).
+#
+# 10% rather than zero, because a single transient provider hiccup in 39 cases
+# is noise; a third of the suite is an outage.
+MAX_ERROR_SHARE = 0.10
+
+
+def accept_row(label: str, path: Path, errored: list, total: int) -> bool:
+    """Whether this row is a measurement or the wreckage of an outage."""
+    if not errored:
+        return True
+
+    share = len(errored) / total if total else 1.0
+    kinds: dict[str, int] = {}
+    for result in errored:
+        key = (result.error or "").split(":")[0][:60]
+        kinds[key] = kinds.get(key, 0) + 1
+    summary = "; ".join(f"{count}x {kind}" for kind, count in
+                        sorted(kinds.items(), key=lambda kv: -kv[1]))
+
+    if share < MAX_ERROR_SHARE:
+        print(f"\n  NOTE: {len(errored)}/{total} case(s) errored "
+              f"({share:.0%}) - under the {MAX_ERROR_SHARE:.0%} threshold, so "
+              f"the row is kept. {summary}")
+        return True
+
+    print(f"\n  REFUSING TO WRITE {path.name}")
+    print(f"  {len(errored)}/{total} cases errored ({share:.0%}), over the "
+          f"{MAX_ERROR_SHARE:.0%} threshold.")
+    print(f"  {summary}")
+    print()
+    print("  An errored case carries no evidence, so writing this row would")
+    print("  shrink every denominator in the table without saying so - and a")
+    print("  row on disk is skipped on the next run, so it would be treated as")
+    print("  a finished measurement. Fix the cause and re-run this row.")
+    return False
+
+
 def banner(title: str) -> None:
     print(f"\n{RULE}\n{title}\n{RULE}", flush=True)
 
@@ -212,9 +264,15 @@ def main() -> int:
             )
             report.notes.append(f"frozen case set ({len(frozen_ids)}): "
                                 + ", ".join(frozen_ids))
+
+            errored = [r for r in report.results if r.error]
+            if not accept_row(label, path, errored, len(report.results)):
+                return 1
+
             report.write(path)
             print(f"\n  Wrote {path.name} "
-                  f"({report.passed_count}/{len(report.results)} passed)")
+                  f"({report.passed_count}/{len(report.results)} passed, "
+                  f"{len(errored)} errored)")
             print(f"  Budget: {client.budget_summary()}", flush=True)
 
         banner("DONE")
