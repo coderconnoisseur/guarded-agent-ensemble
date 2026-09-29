@@ -189,7 +189,7 @@ class TestOpenRouterUnchanged:
         assert OpenRouterProvider().extract_content(payload) == "Final: 42"
 
     def test_registry_exposes_every_backend(self):
-        assert set(build_providers()) == {"openrouter", "gemini", "groq"}
+        assert set(build_providers()) == {"openrouter", "gemini", "groq", "ollama"}
 
     def test_groq_shares_the_openai_wire_format(self):
         """Groq is OpenAI-compatible, so only the endpoint should differ."""

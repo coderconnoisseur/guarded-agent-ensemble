@@ -319,7 +319,87 @@ MISALIGNMENT_JUDGE_MAX_TOKENS = 200
 # Groq leads because its free tier is the only one with enough headroom to run
 # a full A/B evaluation: 1000/day per model against OpenRouter's 50/day per
 # account and Gemini's 20/day per model.
+# ---------------------------------------------------------------------------
+# Local backbone via Ollama (CLAUDE.md §11 — the architecture diagram's
+# Hosted/Local mode toggle, made real)
+# ---------------------------------------------------------------------------
+
+# Ollama's OpenAI-compatible shim. The `/v1` suffix is load-bearing: the bare
+# root serves Ollama's own native API, which speaks a different response shape
+# and would fail in `extract_content` rather than at connect time.
+OLLAMA_BASE_URL = _setting("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+
+# Candidates, in the order `demos/local_probe.py` should try them.
+#
+# THE FLOOR IS MEASURED, NOT GUESSED. `liquid/lfm-2.5-2.6b` was dropped from
+# FREE_MODEL_CHAIN above because at 2.6B it could not reliably emit a Tool
+# Dependency Graph, and a backbone that cannot speak the protocol yields no
+# Condition B at all. So nothing below ~3B belongs here however well it fits
+# in VRAM.
+#
+#   1. qwen3:4b       ~2.5GB at Q4_K_M. FIRST CHOICE, and the reason is
+#                     experimental design rather than quality: BACKBONE_MODEL
+#                     is qwen/qwen3.8-27b, so this holds the model family and
+#                     generation constant and varies only *scale*. Any
+#                     difference in a two-backbone grid is then attributable
+#                     to capability rather than to a different training
+#                     recipe. Needs thinking mode off — see
+#                     OLLAMA_DISABLE_THINKING.
+#   2. qwen2.5:3b     ~1.9GB. Fallback: no thinking mode to fight, reliably
+#                     good at structured JSON, and roomier on a 4GB card.
+#                     Weaker family-match argument, lower risk.
+#   3. llama3.2:3b    ~2.0GB. Second fallback. Different family entirely, so
+#                     a result from it confounds scale with training recipe —
+#                     usable as a third arm, not as the comparison.
+OLLAMA_MODEL_CHAIN = [
+    "qwen3:4b",
+    "qwen2.5:3b",
+    "llama3.2:3b",
+]
+
+# Qwen3 is a hybrid-reasoning model: left alone it emits a <think> block
+# before answering. Under CLAUDE.md §5.3's prompted-JSON protocol that block
+# is pure cost — it consumes the reply budget and the Action:/Final: parser
+# rejects what comes back. Off by default; set OLLAMA_DISABLE_THINKING=0 to
+# measure the difference rather than assume it.
+OLLAMA_DISABLE_THINKING = _setting("OLLAMA_DISABLE_THINKING", "1") != "0"
+
+# No provider quota and no token-per-minute ceiling: the only limits are the
+# machine's. Both numbers exist purely so the shared budget/limiter machinery
+# has something to read — they are not measurements of anything.
+#
+# This is the whole practical argument for a local arm: at Groq's measured
+# 2 requests/minute the frozen ablation is a ~9-hour job and N=3 is out of
+# reach. Here the ceiling is tokens/second on the GPU.
+OLLAMA_DAILY_REQUEST_CAP = int(
+    _setting("OLLAMA_DAILY_REQUEST_CAP", "1000000") or 1_000_000
+)
+OLLAMA_RATE_LIMIT_PER_MINUTE = int(
+    _setting("OLLAMA_RATE_LIMIT_PER_MINUTE", "600") or 600
+)
+
+# A local model generates far slower than a hosted one on a 4GB card — the
+# measured figure on a GTX 1650 Ti was ~4.5 tok/s for a 7B that did not fit,
+# and 25-40 tok/s is expected for a 3-4B that does. A 400-token reply at
+# 25 tok/s is ~16s, and a ReAct turn can be several of those, so the hosted
+# default would time out long before the model was finished.
+OLLAMA_REQUEST_TIMEOUT_S = int(_setting("OLLAMA_REQUEST_TIMEOUT_S", "300") or 300)
+
+# Switching the backbone to the local arm. Deliberately NOT a change to
+# BACKBONE_MODEL: §9.1's comparison requires one pinned backbone, and every
+# number in results/ was measured against the Groq model. The local model is a
+# SECOND ARM, so setting this changes what a run measures and the run's
+# filename records it.
+USE_LOCAL_BACKBONE = _setting("USE_LOCAL_BACKBONE", "0") == "1"
+LOCAL_BACKBONE_MODEL = _setting("LOCAL_BACKBONE_MODEL", "") or OLLAMA_MODEL_CHAIN[0]
+
+
 PROVIDER_CHAIN: list[tuple[str, str]] = [
+    # Only present when the local arm is explicitly selected. Absent
+    # otherwise, so a fallback can never quietly move a scored run onto a
+    # different backbone - §9.1 needs one pinned model per run.
+    *((("ollama", model) for model in OLLAMA_MODEL_CHAIN)
+      if USE_LOCAL_BACKBONE else ()),
     *(("groq", model) for model in GROQ_MODEL_CHAIN),
     *(("openrouter", model) for model in FREE_MODEL_CHAIN),
     *(("gemini", model) for model in GEMINI_MODEL_CHAIN),
@@ -347,6 +427,13 @@ PROVIDER_LIMITS: dict[str, dict] = {
         "rate_limit_per_minute": GROQ_RATE_LIMIT_PER_MINUTE,
         "budget_scope": "model",
     },
+    # Not a quota - there is no provider to impose one. The numbers exist so
+    # the shared limiter/budget machinery has something to read.
+    "ollama": {
+        "daily_cap": OLLAMA_DAILY_REQUEST_CAP,
+        "rate_limit_per_minute": OLLAMA_RATE_LIMIT_PER_MINUTE,
+        "budget_scope": "model",
+    },
 }
 
 
@@ -365,6 +452,9 @@ def api_key_for(provider: str) -> str:
         "openrouter": OPENROUTER_API_KEY,
         "gemini": GEMINI_API_KEY,
         "groq": GROQ_API_KEY,
+        # Ollama is unauthenticated; the provider sends a placeholder so the
+        # request path stays identical to the hosted backends.
+        "ollama": "ollama",
     }.get(provider, "")
 
 

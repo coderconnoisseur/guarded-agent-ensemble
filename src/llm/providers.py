@@ -29,6 +29,8 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
+from config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -193,6 +195,81 @@ class GroqProvider(OpenAICompatibleProvider):
     base_url = "https://api.groq.com/openai/v1"
 
 
+class OllamaProvider(OpenAICompatibleProvider):
+    """A model served locally by Ollama (CLAUDE.md §11, "Local/Colab GPU mode").
+
+    Ollama exposes an OpenAI-compatible endpoint at `/v1`, so this is a base
+    URL and auth and nothing else. That is the point of §11's promise that the
+    backbone can be swapped "behind the same client.chat() interface so nothing
+    else in the codebase needs to change": no defense module, no pipeline and
+    no test knows this exists.
+
+    WHY A LOCAL BACKBONE IS A MEASUREMENT DECISION, NOT A CONVENIENCE
+    -----------------------------------------------------------------
+    Two constraints have shaped every number this project has produced, and a
+    local model removes both:
+
+      - **The rate limit, not the daily cap, is what costs time.** Groq's 1000
+        OTPM ceiling works out at 2 requests/minute, which makes the frozen
+        ablation a ~9-hour job, forces N=1, and injects ~30s of sleep into
+        every latency measurement (see `scorer.added_latency`). Locally there
+        is no limiter at all.
+      - **The pinned backbone resists the attacks.** 0/30 against AgentDojo's
+        own five templates, and `ASR_inj` 0.07 at baseline. At that rate a
+        significant result needs n=65 (`stats.required_n`); at a baseline of
+        0.40 it needs n=9. A smaller model failing more often is *headroom*,
+        which is the scarce resource here - not a downgrade.
+
+    THE FLOOR, WHICH IS MEASURED
+    ----------------------------
+    Small does not mean arbitrarily small. `liquid/lfm-2.5-2.6b` was dropped
+    from `FREE_MODEL_CHAIN` because at 2.6B it could not reliably emit the Tool
+    Dependency Graph Phase 3 needs (settings.py, and CLAUDE.md §5.1). A
+    backbone that cannot speak the protocol does not give a weak Condition B -
+    it gives **no** Condition B, and the ablation disappears rather than
+    gaining sensitivity. So a candidate is probed before it is trusted:
+    `python demos/local_probe.py`.
+
+    No API key. Ollama ignores the Authorization header, but one is sent
+    anyway so the request path stays identical to the hosted providers - a
+    second code path here is a second place for the two to drift.
+    """
+
+    name = "ollama"
+    base_url = settings.OLLAMA_BASE_URL
+
+    def __init__(self, base_url: str = "") -> None:
+        # Instance-level override, so a test or a machine serving on another
+        # port does not have to mutate the class.
+        if base_url:
+            self.base_url = base_url
+
+    def headers(self, api_key: str) -> dict[str, str]:
+        # Ollama does not authenticate. Sending a placeholder rather than
+        # omitting the header keeps this on the same code path as every other
+        # OpenAI-compatible backend.
+        return super().headers(api_key or "ollama")
+
+    def build_body(
+        self, model: str, messages: list[dict[str, Any]], params: dict[str, Any]
+    ) -> dict[str, Any]:
+        body = super().build_body(model, messages, params)
+        # Qwen3 and other hybrid-reasoning models emit a <think> block before
+        # the answer. Under the project's prompted-JSON protocol (CLAUDE.md
+        # §5.3) that block is pure cost: it consumes the token budget and the
+        # `Action:`/`Final:` parser rejects what comes back. Ollama's OpenAI
+        # shim passes unknown keys through to the model's chat template, and
+        # these are the two spellings the Qwen3 templates read.
+        #
+        # Harmless on a model without a thinking mode - its template ignores
+        # the keys - so it is unconditional rather than a per-model special
+        # case, which would be one more thing to keep in sync with the chain.
+        if settings.OLLAMA_DISABLE_THINKING:
+            body.setdefault("think", False)
+            body.setdefault("chat_template_kwargs", {"enable_thinking": False})
+        return body
+
+
 # ---------------------------------------------------------------------------
 # Google Gemini
 # ---------------------------------------------------------------------------
@@ -308,4 +385,5 @@ def build_providers(referer: str = "", title: str = "") -> dict[str, Provider]:
         OpenRouterProvider.name: OpenRouterProvider(referer=referer, title=title),
         GeminiProvider.name: GeminiProvider(),
         GroqProvider.name: GroqProvider(),
+        OllamaProvider.name: OllamaProvider(),
     }

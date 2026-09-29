@@ -393,6 +393,21 @@ class LLMClient:
 
     # -- plumbing ----------------------------------------------------------
 
+    @staticmethod
+    def _timeout_for(provider: str) -> float:
+        """Per-provider HTTP timeout.
+
+        A local model on a small card generates far slower than a hosted one -
+        measured at ~4.5 tok/s for a 7B that did not fit a 4GB GTX 1650 Ti,
+        and 25-40 tok/s expected for a 3-4B that does. A 400-token reply at
+        25 tok/s is ~16s, and a first call also pays model load time, so the
+        120s hosted default can expire on a perfectly healthy local server and
+        be misread as the model being broken.
+        """
+        if provider == "ollama":
+            return float(settings.OLLAMA_REQUEST_TIMEOUT_S)
+        return float(settings.REQUEST_TIMEOUT_S)
+
     def api_key(self, provider: str) -> str:
         if self._api_key_override is not None:
             return self._api_key_override
@@ -485,7 +500,10 @@ class LLMClient:
                 queued.append(slept)
             budget.check()
             try:
-                response = self._client.post(url, headers=headers, json=body)
+                response = self._client.post(
+                    url, headers=headers, json=body,
+                    timeout=self._timeout_for(name),
+                )
             except httpx.RequestError as exc:  # network-level, worth retrying
                 last_error = f"network error: {exc!r}"
                 self._sleep_backoff(attempt, None)

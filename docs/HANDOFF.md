@@ -1,7 +1,7 @@
 # Handoff — Guarded Agent Ensemble
 
 **Updated:** 2026-09-27 · **Repo:** https://github.com/coderconnoisseur/guarded-agent-ensemble (public)
-**Branch:** `master` · **36 commits** · **602 tests passing**
+**Branch:** `master` · **37 commits** · **628 tests passing**
 **Phases 0–5 complete**, plus the §5.2 coverage expansion, the §5.1
 frozen-suite ablation, confidence intervals on every rate (§5.5), the
 external-benchmark work (§5.2d/e) and the replay harness (§5.6).
@@ -88,7 +88,8 @@ python demos/ablation_table.py                 # cumulative ablation (refuses if
 python demos/frozen_ablation.py                # all five rows, one frozen suite
 python demos/phase6_full_eval.py               # PHASE 6: results/report.md, free
 python demos/phase6_full_eval.py --dry-run     # price the modes that cost requests
-python -m pytest                               # 602 tests, all offline
+python demos/local_probe.py                    # can a local model be the backbone?
+python -m pytest                               # 628 tests, all offline
 ```
 
 ---
@@ -949,3 +950,87 @@ python demos/phase6_full_eval.py --dry-run    # price the paid modes
 python demos/phase6_full_eval.py --timing 4   # the uncached LAT run, ~58 requests
 python demos/phase6_full_eval.py --isolation  # §9.1 tier 2, ~9h — not yet run
 ```
+
+---
+
+## 10. The local backbone arm (§11), wired but not yet measured
+
+`src/llm/providers.py::OllamaProvider` + `demos/local_probe.py`. Nothing in
+`results/` is affected: `USE_LOCAL_BACKBONE` defaults off, `ollama` is absent
+from `PROVIDER_CHAIN` unless it is set, and a test asserts both — a fallback
+that could quietly move a scored run onto another backbone would invalidate
+the whole ablation without failing anything.
+
+### 10.1 Why a *weaker* backbone is the highest-leverage next step
+
+Phase 6's headline is that the ensemble does not improve the composite (§9.1).
+The cause is measured and it is not the defenses: the Firewall flags 10/10
+payloads at 0 false positives, the Planner drives `ASR_inj` 0.07 → 0.00, and
+the backbone resists AgentDojo's own five templates **0/30**. There is no
+headroom.
+
+Significance is driven by the **baseline rate**, not by how many cases get
+written (`stats.required_n`):
+
+| Condition A attack rate | cases per arm for p<0.05 |
+|---|---|
+| **0.07 (what we have)** | **65** |
+| 0.25 | 14 |
+| 0.40 | 9 |
+| 0.70 | 5 |
+
+There are 15 injection cases. Writing 50 more is weeks of work; raising the
+baseline makes the 15 sufficient. A smaller model failing more often is the
+scarce resource here, not a downgrade.
+
+Local also removes the constraint that shaped everything else: Groq's 2
+requests/minute is why the frozen ablation is ~9 h, why N=1, and why LAT needs
+a ~30 s sleep subtracted out of every reading. On a local model there is no
+limiter at all, so N=3 and a bigger suite become possible.
+
+### 10.2 The floor, and why the probe exists
+
+**Do not drop below ~3B.** `liquid/lfm-2.5-2.6b` was retired from
+`FREE_MODEL_CHAIN` for being unable to emit a Tool Dependency Graph, and
+`Planner.build_plan` **degrades rather than raising** — so a too-small
+backbone does not give a weak Condition B, it gives a Condition B that looks
+like it ran and constrained nothing. That is exactly the silent-number failure
+this project keeps finding.
+
+`demos/local_probe.py` is three hard gates, cheapest first: reachable → ReAct
+protocol parses (using the real `parse_agent_reply`, not a lookalike) → TDG is
+valid and **not degraded**. It scores no GAI term deliberately; measuring `HS`
+here on a handful of cases is the tune-and-report-on-the-same-data trap of
+§5.2d.
+
+`OLLAMA_MODEL_CHAIN` is ordered `qwen3:4b`, `qwen2.5:3b`, `llama3.2:3b`.
+qwen3:4b leads on **experimental design, not quality**: `BACKBONE_MODEL` is
+`qwen/qwen3.8-27b`, so it holds family and generation constant and varies only
+scale, making a two-backbone grid attributable to capability rather than to a
+different training recipe. A test asserts both the size floor and the family
+match.
+
+Qwen3 is a hybrid-reasoning model, so `OLLAMA_DISABLE_THINKING` sends both
+`think: false` and `chat_template_kwargs.enable_thinking: false`. Under §5.3's
+prompted-JSON protocol a `<think>` block consumes the reply budget and the
+`Action:`/`Final:` parser rejects what comes back.
+
+### 10.3 Machine state, measured 2026-09-29 — not yet runnable
+
+GTX 1650 Ti, 4 GB VRAM. The server answers but `/api/tags` returns
+`{"models":[]}`: the `D:` store has `blobs/` (17) and `manifests/` (**0**), so
+blobs were copied without manifests. The `C:` store holds the only manifest
+(mistral 7b-instruct-q4_0).
+
+Note for anyone repeating this: the `D:\ollama` folder is **already** a valid
+models root — it contains `blobs/` and `manifests/` directly — so pointing
+`OLLAMA_MODELS` at `D:\ollama\models` is one level too *deep*. A fresh
+`ollama pull` writes both blobs and manifest and resolves it either way.
+
+Mistral 7B is not a candidate regardless: at Q4_0 it needs ~3.85 GB of weights
+against ~3.2 GB free, so only 17 of 33 layers offloaded and it ran at ~4.5
+tok/s. A 3–4B model fits entirely and is also the weaker backbone we want.
+
+**Nothing has been measured on a local model yet.** The next step is
+`ollama pull qwen3:4b` then `python demos/local_probe.py`; only if all three
+gates pass is a grid run worth the wall clock.
