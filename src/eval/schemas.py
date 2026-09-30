@@ -254,6 +254,14 @@ class Outcome(BaseModel):
     # LAT subtracts it, or it would measure the free tier's queue and call
     # the result defense overhead. `None` means "not recorded".
     queued_ms: int | None = None
+    # Wall clock for the WHOLE case, measured by the runner around
+    # `pipeline.run()`. `latency_ms` comes from the agent loop and brackets
+    # only the ReAct loop, so in Condition B it excludes the Harm Gate and
+    # Planner calls that precede it - while `queued_ms` is counted across the
+    # whole case. Subtracting the wider bracket from the narrower one produced
+    # negative "active" time and made LAT unscoreable. This is the matching
+    # bracket. `None` means "not recorded".
+    case_latency_ms: int | None = None
 
 
 class RunResult(BaseModel):

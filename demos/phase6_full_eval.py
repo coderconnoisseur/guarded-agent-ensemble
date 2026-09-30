@@ -74,7 +74,7 @@ def banner(title: str) -> None:
     print(f"\n{RULE}\n{title}\n{RULE}", flush=True)
 
 
-def timing_run(client: LLMClient, count: int) -> int:
+def timing_run(client: LLMClient, count: int, model: str = "") -> int:
     """Measure LAT: the same cases through both conditions, cache off.
 
     Deliberately small. LAT is a per-tool-call ratio, so it does not need the
@@ -102,12 +102,17 @@ def timing_run(client: LLMClient, count: int) -> int:
           f"{len(cases) * (2.8 + 11.6) / settings.GROQ_RATE_LIMIT_PER_MINUTE / 60:.1f}h "
           f"at {settings.GROQ_RATE_LIMIT_PER_MINUTE}/min.\n")
 
+    # The model must reach the pipelines. Without this the flag was accepted
+    # and silently ignored: asking for a qwen2.5:3b timing run produced a
+    # qwen/qwen3.8-27b one, correctly measured and answering a question nobody
+    # asked. Same defect isolation_run had.
+    model = model or settings.BACKBONE_MODEL
     for label, stem, pipeline in (
-        ("A (bare backbone)", "phase6_timing_a", ConditionA(client)),
+        ("A (bare backbone)", "phase6_timing_a", ConditionA(client, model=model)),
         ("B (full ensemble)", "phase6_timing_b",
-         ConditionB(client, enabled_modules=None)),
+         ConditionB(client, model=model, enabled_modules=None)),
     ):
-        path = settings.RESULTS_DIR / f"{stem}.json"
+        path = frozen_ablation.row_path(stem, model)
         if path.exists():
             print(f"  {label}: already on disk ({path.name}), skipping.")
             continue
@@ -244,7 +249,7 @@ def main() -> int:
         # rows the cache can serve for free.
         if args.timing:
             with LLMClient(cache_enabled=False) as client:
-                code = timing_run(client, args.timing)
+                code = timing_run(client, args.timing, args.model)
                 if code:
                     return code
         if args.isolation:

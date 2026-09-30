@@ -242,7 +242,7 @@ def build_report(
 
     condition_a = ablation[0]
     condition_b = ablation[-1]
-    latency = _latency(directory)
+    latency = _latency(directory, wanted)
     if latency is not None and latency.metric.defined:
         # Condition A is the reference the added latency is measured against,
         # so its LAT is 0.0 by construction rather than undefined. Stated here
@@ -696,14 +696,29 @@ def _isolation(write, directory, ablation, backbone: str = "") -> None:
     write("")
 
 
-def _latency(directory: Path) -> scorer.LatencyMeasurement | None:
-    """LAT from the uncached timing snapshots, or None if they were not run."""
-    a = directory / "phase6_timing_a.json"
-    b = directory / "phase6_timing_b.json"
-    if not (a.exists() and b.exists()):
+def _latency(directory: Path, backbone: str = "") -> scorer.LatencyMeasurement | None:
+    """LAT from the uncached timing snapshots for ONE arm.
+
+    Backbone-scoped, like every other row: handing the pinned arm's timing to
+    a report about a different backbone would state a latency that arm never
+    measured - and latency is the sub-metric most obviously a property of the
+    model and the provider, so mixing arms here is worse than elsewhere.
+    """
+    wanted = backbone or settings.BACKBONE_MODEL
+
+    def pick(stem: str) -> SuiteReport | None:
+        for path in (directory / f"{stem}.json",
+                     *sorted(directory.glob(f"{stem}_*.json"))):
+            if not path.exists():
+                continue
+            report = SuiteReport.model_validate_json(path.read_text(encoding="utf-8"))
+            if wanted in report.backbone_model:
+                return report
         return None
-    ra = SuiteReport.model_validate_json(a.read_text(encoding="utf-8"))
-    rb = SuiteReport.model_validate_json(b.read_text(encoding="utf-8"))
+
+    ra, rb = pick("phase6_timing_a"), pick("phase6_timing_b")
+    if ra is None or rb is None:
+        return None
     return scorer.added_latency(ra.results, rb.results)
 
 

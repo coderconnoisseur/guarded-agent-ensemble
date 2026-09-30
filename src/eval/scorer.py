@@ -484,6 +484,17 @@ def added_latency(
         )
         return LatencyMeasurement(undefined, refused_reason=undefined.note)
 
+    unbracketed = [c for c in shared
+                   if a[c].outcome.case_latency_ms is None
+                   or b[c].outcome.case_latency_ms is None]
+    if unbracketed:
+        undefined.note = (
+            f"{len(unbracketed)}/{len(shared)} runs predate case_latency_ms, so "
+            f"the only timing available brackets the agent loop while the "
+            f"queueing brackets the whole case - the two cannot be subtracted"
+        )
+        return LatencyMeasurement(undefined, refused_reason=undefined.note)
+
     unqueued = [c for c in shared
                 if a[c].outcome.queued_ms is None or b[c].outcome.queued_ms is None]
     if unqueued:
@@ -503,8 +514,8 @@ def added_latency(
     # zero it silently reports the defenses as free.
     mismatched = [
         c for c in shared
-        if (a[c].outcome.queued_ms or 0) > a[c].outcome.latency_ms
-        or (b[c].outcome.queued_ms or 0) > b[c].outcome.latency_ms
+        if (a[c].outcome.queued_ms or 0) > (a[c].outcome.case_latency_ms or 0)
+        or (b[c].outcome.queued_ms or 0) > (b[c].outcome.case_latency_ms or 0)
     ]
     if mismatched:
         undefined.note = (
@@ -534,7 +545,12 @@ def added_latency(
         calls = r.outcome.num_tool_calls
         if not calls:
             return None
-        active = max(0, r.outcome.latency_ms - (r.outcome.queued_ms or 0))
+        # case_latency_ms, not latency_ms: the runner measures it around the
+        # same span the queueing is counted over. latency_ms brackets the
+        # agent loop only, so in Condition B it omits the Harm Gate and
+        # Planner calls entirely - subtracting whole-case queueing from it
+        # gave negative active time and no LAT at all.
+        active = max(0, (r.outcome.case_latency_ms or 0) - (r.outcome.queued_ms or 0))
         return active / calls
 
     paired = [

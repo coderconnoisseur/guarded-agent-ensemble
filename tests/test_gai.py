@@ -25,6 +25,12 @@ from src.eval import scorer
 from src.eval.schemas import Outcome, RunResult
 
 
+#: Distinguishes "caller said nothing" from "caller said None". Needed
+#: because None is a meaningful value here: it is what a pre-Phase-6 result
+#: carries, and the whole point of one test is that the scorer refuses it.
+_DEFAULT = object()
+
+
 def run(
     case_id: str,
     *,
@@ -39,6 +45,7 @@ def run(
     tool_calls: int = 2,
     cache_hits: int | None = 0,
     queued_ms: int | None = 0,
+    case_latency_ms: int | None | object = _DEFAULT,
 ) -> RunResult:
     """One saved run, with only the fields the Phase 6 metrics read."""
     return RunResult(
@@ -52,6 +59,11 @@ def run(
             refused=refused, task_completed=completed, attack_succeeded=attack,
             latency_ms=latency_ms, num_llm_calls=3, num_tool_calls=tool_calls,
             cache_hits=cache_hits, queued_ms=queued_ms,
+            # Defaults to latency_ms: in a synthetic run the agent loop and
+            # the whole case are the same span. Real runs differ, which is
+            # the whole reason this field exists.
+            case_latency_ms=(latency_ms if case_latency_ms is _DEFAULT
+                             else case_latency_ms),
         ),
     )
 
@@ -430,6 +442,25 @@ class TestAddedLatency:
         result = scorer.added_latency(a, b)
         assert not result.metric.defined
         assert "rate-limiter" in result.refused_reason
+
+    def test_refuses_when_the_case_bracket_was_not_recorded(self):
+        """Pre-fix results carry only the agent loop's own timer, which
+        brackets a narrower span than the queueing does. Subtracting one from
+        the other gave negative active time; refusing is the honest answer."""
+        a, b = self._pair(case_latency_ms=None)
+        result = scorer.added_latency(a, b)
+        assert not result.metric.defined
+        assert "bracket" in result.refused_reason
+
+    def test_refuses_when_queueing_exceeds_the_case(self):
+        """The signature of a bracket mismatch: more time queued than the
+        case took. Measured for real - 120,188ms case against 178,420ms
+        queued, i.e. -58,232ms of 'active' time."""
+        a = [run("x", suite="injection", latency_ms=120_188,
+                 case_latency_ms=120_188, queued_ms=178_420, tool_calls=1)]
+        b = [run("x", suite="injection", latency_ms=120_188,
+                 case_latency_ms=120_188, queued_ms=178_420, tool_calls=1)]
+        assert not scorer.added_latency(a, b).metric.defined
 
     def test_refuses_when_the_arms_share_no_case(self):
         a = [run("inj_001", suite="injection")]

@@ -390,3 +390,49 @@ class TestFrozenAblationRefusesOutageRows:
 
     def test_an_empty_run_is_refused_rather_than_divided_by_zero(self):
         assert self._accept([self._Err("x")], total=0) is False
+
+
+class TestTimingAndIsolationHonourTheBackbone:
+    """A --model flag that is accepted and ignored is worse than one that errors.
+
+    Measured: `phase6_full_eval --model qwen2.5:3b --timing 4` produced a
+    qwen/qwen3.8-27b timing run - correctly measured, correctly bracketed, and
+    answering a question nobody asked. The pipelines were constructed without
+    the model, so the flag reached the filename logic and nothing else.
+    """
+
+    def _signature(self, fn):
+        import inspect
+
+        return inspect.signature(fn).parameters
+
+    def test_timing_run_takes_a_model(self):
+        from demos.phase6_full_eval import timing_run
+
+        assert "model" in self._signature(timing_run)
+
+    def test_isolation_run_takes_a_model(self):
+        from demos.phase6_full_eval import isolation_run
+
+        assert "model" in self._signature(isolation_run)
+
+    def test_both_write_backbone_scoped_filenames(self):
+        """Otherwise a second arm's timing overwrites the first arm's."""
+        from demos.frozen_ablation import row_path
+
+        for stem in ("phase6_timing_a", "phase6_timing_b",
+                     "isolation_planner", "isolation_misalignment"):
+            pinned = row_path(stem, settings.BACKBONE_MODEL).name
+            local = row_path(stem, "qwen2.5:3b").name
+            assert pinned == f"{stem}.json"
+            assert local != pinned
+
+    def test_the_report_reads_latency_for_the_arm_it_is_reporting(self):
+        """LAT is the sub-metric most obviously a property of the model and
+        provider, so handing one arm's timing to another arm's report would
+        state a latency that arm never measured."""
+        import inspect
+
+        from src.eval.report import _latency
+
+        assert "backbone" in inspect.signature(_latency).parameters

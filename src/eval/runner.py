@@ -24,6 +24,7 @@ folder. This is a scoping decision, not an oversight.
 from __future__ import annotations
 
 import logging
+import time
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -308,9 +309,15 @@ def run_case(
     client = getattr(pipeline, "client", None)
     queued_before = getattr(client, "queued_ms_total", None)
 
+    # Timed around the same span the queueing is counted over, so LAT can
+    # subtract one from the other. Reusing the agent loop's own timer here
+    # mismatched the brackets and produced negative active time.
+    case_started = time.perf_counter()
     result = pipeline.run(case.prompt)
+    case_elapsed_ms = int((time.perf_counter() - case_started) * 1000)
     world = capture_world_state()
     outcome, check_results, passed, reason = grade(case, result, world)
+    outcome.case_latency_ms = case_elapsed_ms
     if queued_before is not None:
         outcome.queued_ms = client.queued_ms_total - queued_before
 
