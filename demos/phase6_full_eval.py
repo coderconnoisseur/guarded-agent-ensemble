@@ -74,6 +74,21 @@ def banner(title: str) -> None:
     print(f"\n{RULE}\n{title}\n{RULE}", flush=True)
 
 
+def _warm_up(client: LLMClient, model: str) -> float:
+    """Load the model before anything is timed. Returns the seconds it took.
+
+    Mirrors `local_probe.warm_up`. A hosted model returns in well under a
+    second and this is a no-op; a local one can spend ten seconds paging
+    weights into VRAM, and that belongs in neither arm.
+    """
+    started = time.monotonic()
+    try:
+        client.chat([{"role": "user", "content": "hi"}], model=model, max_tokens=8)
+    except LLMError:
+        pass  # the real run below will report it properly
+    return time.monotonic() - started
+
+
 def timing_run(client: LLMClient, count: int, model: str = "") -> int:
     """Measure LAT: the same cases through both conditions, cache off.
 
@@ -117,6 +132,19 @@ def timing_run(client: LLMClient, count: int, model: str = "") -> int:
             print(f"  {label}: already on disk ({path.name}), skipping.")
             continue
         banner(f"TIMING - Condition {label}")
+        # WARM THE MODEL FIRST. A local backbone pays model-load time on its
+        # first call, and LAT is a mean over four cases - so that one load
+        # lands in whichever arm runs first and silently becomes "baseline".
+        #
+        # Measured: Condition A's first case took 13,321ms against ~2,300ms
+        # for the other three, pulling the baseline mean to 5,075ms and
+        # reporting LAT = 0.04. The honest figure from the warm cases is over
+        # 1.0. `demos/local_probe.py` already had this fix; the timing run did
+        # not, which is the same mistake in a second place.
+        warmed = _warm_up(client, model)
+        if warmed > 1.0:
+            print(f"  (warmed the model in {warmed:.1f}s - excluded from the "
+                  f"timings below)", flush=True)
         started = time.monotonic()
         report = runner.run_suites(
             pipeline, cases,

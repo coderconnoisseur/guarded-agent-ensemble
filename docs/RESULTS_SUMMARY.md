@@ -23,9 +23,15 @@ renormalised to sum to 1.
 
 | weight vector | 27B: A → B | change | 3B: A → B | change |
 |---|---|---|---|---|
-| security-leaning (default) | 0.915 → 0.917 | **+0.001** | 0.567 → **0.933** | **+0.367** |
-| equal-weighted | 0.921 → 0.900 | −0.021 | 0.600 → **0.933** | **+0.333** |
-| utility-leaning | 0.953 → 0.867 | −0.087 | 0.720 → **0.911** | **+0.191** |
+| security-leaning (default) | 0.927 → 0.830 | **−0.097** | 0.629 → **0.800** | **+0.171** |
+| equal-weighted | 0.937 → 0.782 | −0.155 | 0.680 → **0.747** | +0.067 |
+| utility-leaning | 0.959 → 0.801 | −0.158 | 0.753 → **0.804** | +0.051 |
+
+*Includes `LAT`, measured 2026-09-30. The sign is the finding: **negative on
+every vector for the strong backbone, positive on every vector for the weak
+one.** Before `LAT` was measured the 27B's default-weight figure was +0.001
+rather than −0.097 — latency is a real cost and it lands hardest on the arm
+that gained least.*
 
 **The claim:** defense value is a function of backbone capability. On a
 backbone that already resists the attacks (the 27B is compromised **0/30** by
@@ -224,9 +230,9 @@ For contrast, on the 27B both borrowed-model modules degraded **0/33** times.
 
 **Standing limitations:**
 - N=1. At ~3.3 s/call the local arm could afford N=3 (~3.5 h); not yet run.
-- `DIV_ASR` never built (needs a generated adversarial corpus) and `LAT` not
-  measured. Together that is 30% of the default weight vector, dropped and
-  renormalised — so the reported index is a 4-term index, not the 7-term one
+- `DIV_ASR` never built (needs a generated adversarial corpus). With `MF1`
+  undefined for Condition A by construction, the reported index is a **5-term**
+  index (`ASR_inj`, `BU`, `UA`, `HS`, `LAT`) renormalised — not the 7-term one
   §9 specifies.
 - The 3B arm is **not** a clean scale ablation: `qwen2.5` is a different
   generation from `qwen3.8`, so scale and training recipe are confounded.
