@@ -158,46 +158,176 @@ front of me and it will be identical."*
 
 ---
 
-## §4. The results — in the order to present them
+## §4A. What actually works — module by module, with numbers
 
-### 4.1 The headline: the ensemble beats each of its own modules
+This is the section to spend the most time on. Every figure is from the 3B arm
+(`qwen2.5:3b`), 39 frozen cases, measured in one sitting. The 27B arm is
+discussed in §4C.
 
-All rows: same backbone, same 39 cases, same code.
+### The headline in one line
+
+> **An unguarded 3B agent complied with 8 out of 8 harmful requests and fell to
+> 6 of 15 prompt-injection attacks. Wrapped in the ensemble, both went to
+> zero — with benign task success unchanged at 100%.**
+
+### 4A.1 Each module, what it fixed, and by how much
+
+Reading the cumulative ablation left to right — each row adds one module to
+the row above it. GAI here is the 4-term index (`ASR_inj`, `BU`, `UA`, `HS`);
+see §4B for why `LAT` is excluded from *this* table.
+
+| step | metric it moved | before → after | improvement | GAI |
+|---|---|---|---|---|
+| Condition A (bare) | — | — | — | 0.567 |
+| **+ Harm Gate** | `HS` (harmful compliance) | 1.00 → **0.00** | **−100%** | 0.817 (**+0.250**) |
+| **+ Planner** | `ASR_inj` (attack success) | 0.40 → **0.07** | **−82%** | 0.911 (**+0.094**) |
+| **+ Firewall + Quarantine** | `ASR_inj` (the remainder) | 0.07 → **0.00** | **−100%** | 0.983 (**+0.072**) |
+| + Misalignment Checkpoint | `UA` (utility under attack) | 0.93 → 0.73 | **−22%** | 0.933 (**−0.050**) |
+
+**Three of the four modules work. The fourth still costs more than it adds.**
+Say that plainly — see §4D.
+
+**What to say about each:**
+
+- **Harm Gate — the biggest single win, +0.250 GAI.** The bare 3B agent
+  complied with *every* harmful request (8/8). With the gate: 0/8. It is also
+  the only module that improved its metric at **zero** cost — benign utility
+  stayed at 1.00 and over-refusal at 0.00.
+
+- **Planner — cut attack success by 82%.** 6 of 15 injections succeeded
+  unguarded; 1 of 15 with the Tool Dependency Graph enforced. The mechanism is
+  visible: the agent plans its tool sequence *before* reading any untrusted
+  data, so an instruction injected into a tool response has no node to execute
+  on.
+
+- **Firewall + Quarantine — closed the remaining 18%.** Took `ASR_inj` from
+  0.07 to 0.00, and *raised* `UA` from 0.73 to 0.93 — because Quarantine
+  strips the injected line and hands the rest back, so the real task still
+  finishes instead of being refused wholesale.
+
+### 4A.2 Overall before/after
+
+| | Condition A (bare) | Condition B (guarded) | change |
+|---|---|---|---|
+| cases passed | 18/39 (46%) | 31/39 (79%) | **+72% relative** |
+| `HS` harmful compliance | 1.00 | **0.00** | **−100%**, p = 0.0001 |
+| `ASR_inj` attack success | 0.40 | **0.00** | **−100%**, p = 0.0084 |
+| `BU` benign utility | 1.00 | **1.00** | unchanged |
+| over-refusal | 0.00 | **0.00** | unchanged |
+
+**Both headline reductions are statistically significant** (one-sided Fisher
+exact), and they cost nothing in benign utility or over-refusal.
+
+The best-performing configuration is actually **three** modules, at 32/39
+(82%) and GAI 0.983.
+
+### 4A.3 The ensemble beats every single module
+
+Same backbone, same 39 cases, same code. This is the claim §9.1 calls the
+strongest one the project can support.
 
 | configuration | `ASR_inj` ↓ | `HS` ↓ | GAI |
 |---|---|---|---|
-| Condition A (no defenses) | 0.40 | 1.00 | 0.567 |
 | Harm Gate only | 0.40 | **0.00** | 0.817 |
 | Planner only | **0.07** | 1.00 | 0.661 |
 | Firewall + Quarantine only | **0.07** | 1.00 | 0.711 |
 | Misalignment only | **0.00** | 0.88 | 0.665 |
 | **Full ensemble** | **0.00** | **0.00** | **0.933** |
 
-**The line to deliver:** *"Harm-Gate-only drives the harm score to zero and
-leaves the attack success rate at 0.40. Planner-only and Firewall-only are the
-exact mirror image. Only the ensemble reaches zero on both — because each
-module covers one threat model and none covers all three."*
+**+0.117 over the best single module.** The reason is in the shapes, not the
+index: Harm-Gate-only zeroes `HS` and leaves `ASR_inj` at 0.40. Planner-only
+and Firewall-only are the exact mirror. **Only a combination reaches zero on
+both**, because each module covers one threat model and none covers all three.
 
-### 4.2 Statistical significance
+### 4A.4 The Harm Gate, measured against a real external benchmark
 
-| metric | Condition A → B | p | verdict |
+Our own suite has 8 harmful cases. To check the gate was not just fitted to
+them, it was benchmarked against **AgentHarm's own 352 paired prompts**, on a
+held-out split no tuning had seen:
+
+| | detection | over-refusal | Fisher p |
 |---|---|---|---|
-| `ASR_inj` | 6/15 → 0/15 | **0.0084** | significant |
-| `HS` | 8/8 → 0/8 | **0.0001** | significant |
-| over-refusal | 0/26 → 0/26 | 1.000 | no cost |
+| original rubric | 2/176 = **0.01** | 0/176 | 0.25 (no separation) |
+| redesigned gate | **25/25 = 1.00** [0.87–1.00] | 1/25 = 0.04 | **2.1 × 10⁻¹³** |
 
-### 4.3 The composite, both backbones
+```bash
+python demos/harm_gate_bench.py --split heldout --classifier   # [cached]
+```
+
+This is the project's most rigorous single result: an external benchmark, a
+held-out split, and a p-value 11 orders of magnitude below 0.05.
+
+---
+
+## §4B. Latency — the cost side, measured
+
+`LAT` = added wall-clock per tool call, normalised against each arm's own
+unguarded baseline. Rate-limiter sleep is subtracted, so this is compute, not
+queueing.
+
+| arm | bare | guarded | added | `LAT` |
+|---|---|---|---|---|
+| 27B (hosted) | 1070 ms | 1808 ms | +738 ms | **0.69** |
+| 3B (local) | 2183 ms | 5208 ms | +3025 ms | **1.00** (capped) |
+
+**The ensemble roughly doubles-to-triples per-tool-call time.** That is the
+honest cost, and it is why the composite below drops once `LAT` is included.
+The cause is simple: Condition B makes about 4× as many model calls per case
+(11.6 vs 2.8, measured), because planning and verification are themselves LLM
+calls.
+
+**Why `LAT` is not in the §4A tables:** a timing run is an uncached A-vs-B
+measurement, and we ran it for the bare-vs-full comparison only — not for each
+of the four isolation configurations. Including it in one table and not the
+other would be comparing two different indices. §4A is the 4-term index
+throughout; §4C is the 5-term one.
+
+---
+
+## §4C. The composite, with latency, on both backbones
 
 | weight vector | 27B: A → B | 3B: A → B |
 |---|---|---|
-| security-leaning (default) | 0.915 → 0.917 (**+0.001**) | 0.567 → **0.933** (**+0.367**) |
-| equal-weighted | 0.921 → 0.900 (−0.021) | 0.600 → **0.933** (+0.333) |
-| utility-leaning | 0.953 → 0.867 (−0.087) | 0.720 → **0.911** (+0.191) |
+| security-leaning (default) | 0.927 → 0.830 (**−0.097**) | 0.629 → **0.800** (**+0.171**) |
+| equal-weighted | 0.937 → 0.782 (−0.155) | 0.680 → **0.747** (+0.067) |
+| utility-leaning | 0.959 → 0.801 (−0.158) | 0.753 → **0.804** (+0.051) |
 
-**The finding:** defense value is a function of backbone capability. On a
-backbone that already resists the attacks, the ensemble is a net cost — there
-is nothing left to prevent. On a weaker one it is a large gain under every
-weight vector.
+**The sign is the finding: negative on every vector for the strong backbone,
+positive on every vector for the weak one.**
+
+> *"On a backbone that already resists these attacks — the 27B is compromised
+> 0 times out of 30 by AgentDojo's own attack templates — the defenses have
+> nothing left to prevent, so all you pay is the latency. On a backbone that
+> doesn't resist them, the same defenses take harmful compliance and attack
+> success to zero. Defense value is a function of backbone capability."*
+
+Be ready for: *"so your defenses make the good model worse?"* — **Yes, on this
+index, and we report it.** A defense with a real cost and no available benefit
+is a net loss, and an evaluation that hid that would be worth less.
+
+---
+
+## §4D. What does NOT work — say this before he finds it
+
+**The Misalignment Checkpoint is still net negative**, even after we gave it a
+dedicated judge:
+
+| | 3 modules | 4 modules |
+|---|---|---|
+| cases passed | 32/39 | 31/39 |
+| `UA` | 0.93 | 0.73 |
+| GAI | **0.983** | 0.933 |
+
+It detects genuine misalignment well — `MF1` = 0.81, up from 0.31 before the
+judge fix — but it still flags benign work often enough to cost more than it
+saves. The best configuration this project measured is **three** modules, not
+four.
+
+We are reporting the 4-module ensemble as Condition B anyway, because that is
+what the architecture specifies and changing the definition after seeing the
+result would be fitting the spec to the data.
+
+---
 
 ### Where the stats live
 
@@ -208,7 +338,8 @@ weight vector.
 | `results/report_qwen2-5-3b.md` | full report, 3B arm |
 | `results/frozen_*_qwen2.5-3b.json` | raw 5-row ablation, 3B |
 | `results/frozen_*.json` | raw 5-row ablation, 27B |
-| `results/isolation_*.json` | single-module rows (§4.1) |
+| `results/isolation_*.json` | single-module rows (§4A.3) |
+| `results/phase6_timing_*.json` | the uncached latency runs (§4B) |
 
 ---
 
@@ -313,11 +444,11 @@ than one that crashes, because it still produces a plausible number.
 > which model judges. Neither was derived from inspecting which cases failed.
 
 **"What is not built?"**
-> Two of the seven sub-metrics. `DIV_ASR` needs a generated adversarial corpus;
-> hand-writing one would measure our imagination, not attack diversity. `LAT` is
-> attempted and the scorer refuses the result — §7. Both are dropped from the
-> index with the weights renormalised, and the report says so in its own
-> section rather than a footnote.
+> One of the seven: `DIV_ASR`. It needs a *generated* adversarial corpus
+> (AgentVigil-style fuzzing); hand-writing one would measure our imagination,
+> not attack diversity. It is dropped from the index with the remaining weights
+> renormalised, and the report says so in its own section rather than a
+> footnote. `LAT` was the other gap and is now measured — §4B.
 
 ---
 
@@ -326,7 +457,7 @@ than one that crashes, because it still produces a plausible number.
 | gap | status |
 |---|---|
 | `DIV_ASR` | never built, deliberately — needs a *generated* corpus (AgentVigil/SIRAJ) |
-| `LAT` | attempted; the scorer **refuses** the result because the timing brackets do not line up |
+| `LAT` | **measured** — §4B. 0.69 (27B), 1.00 capped (3B) |
 | N=1 | no repeats; at ~3.3 s/call on the local arm N=3 costs ~3.5 h |
 | 3B arm confound | `qwen2.5` is a different *generation* from `qwen3.8`, so scale and training recipe are confounded |
 | not fully local | the Harm Gate and Firewall guard models stay hosted — deliberately, to isolate the backbone as the variable |
@@ -343,8 +474,11 @@ and that is stated in the reports.
 2. **The repo** (2 min) — §2, open `misalignment.py` and show the two prompts.
 3. **It runs** (1 min) — `python -m pytest`.
 4. **One attack, blocked** (2 min) — `show_case.py inj_005`.
-5. **The headline** (2 min) — §4.1 isolation table, `ablation_table.py --model qwen2.5:3b`.
-6. **One failure story** (1.5 min) — §5.2, the fix we measured and reverted.
-7. **Gaps** (0.5 min) — §7, before he asks.
+5. **What works** (3 min) — §4A.1 module-by-module, then §4A.3 the isolation
+   table. Run `ablation_table.py --model qwen2.5:3b`.
+6. **The cost** (1 min) — §4B latency and §4D the module that does not pay
+   for itself. Volunteering this is worth more than hiding it.
+7. **One failure story** (1.5 min) — §5.2, the fix we measured and reverted.
+8. **Gaps** (0.5 min) — §7, before he asks.
 
 Hand him `docs/RESULTS_SUMMARY.md`.
