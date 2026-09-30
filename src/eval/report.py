@@ -618,6 +618,8 @@ def _isolation(write, directory, ablation, backbone: str = "") -> None:
           "shape — and the §9.1 claim — is that each row is good on its own "
           "sub-metric and near-baseline on the others.")
     write("")
+    common = scorer.common_defined_terms(
+        [s.score for s in snapshots] + [a.score for a in ablation])
     write("| configuration | ASR_inj | HS | UA | BU | MF1 |")
     write("|---|---|---|---|---|---|")
     write(f"| _{ablation[0].label}_ | {_fmt(ablation[0].score.get('ASR_inj'))} | "
@@ -639,14 +641,58 @@ def _isolation(write, directory, ablation, backbone: str = "") -> None:
         write(f"**Rows not measured:** {', '.join(missing)}. The table above is "
               f"incomplete and should not be read as the full tier-2 result.")
         write("")
-    write("The isolation configuration is also the **only** one in which the "
-          "Misalignment Checkpoint can be scored at all. Inside the full "
-          "ensemble the Planner emits an empty plan for the action-independent "
-          "misalignment positives and rejects the action before the checkpoint "
-          "is consulted, so the positive class is empty and macro-F1 is "
-          "undefined. That is a genuine finding about ensembles rather than a "
-          "harness defect: **a module can be unmeasurable in situ precisely "
-          "because an earlier module pre-empts it.**")
+    ensemble_mf1 = ablation[-1].score.get("MF1")
+    if ensemble_mf1 is None or not ensemble_mf1.defined:
+        write("The isolation configuration is also the **only** one in which "
+              "the Misalignment Checkpoint can be scored at all. Inside the "
+              "full ensemble the Planner emits an empty plan for the "
+              "action-independent misalignment positives and rejects the "
+              "action before the checkpoint is consulted, so the positive "
+              "class is empty and macro-F1 is undefined. That is a genuine "
+              "finding about ensembles rather than a harness defect: **a "
+              "module can be unmeasurable in situ precisely because an "
+              "earlier module pre-empts it.**")
+    else:
+        write(f"On this arm the checkpoint **is** scorable inside the full "
+              f"ensemble (`MF1` = {ensemble_mf1.value:.2f}), which is not true "
+              f"of every arm: on the pinned backbone the Planner pre-empts the "
+              f"action-independent misalignment positives with an empty plan, "
+              f"leaving the positive class empty and macro-F1 undefined. **A "
+              f"module can be unmeasurable in situ precisely because an "
+              f"earlier module pre-empts it** — and whether that happens "
+              f"depends on the backbone, not on the module.")
+    write("")
+
+    best_single = max(
+        (scorer.compute_gai(s.score.metrics, settings.GAI_WEIGHTS_DEFAULT,
+                            "d", restrict_to=common).value, s.label)
+        for s in snapshots
+    )
+    full = scorer.compute_gai(ablation[-1].score.metrics,
+                              settings.GAI_WEIGHTS_DEFAULT, "d",
+                              restrict_to=common).value
+    write("### Does the ensemble beat its best single module?")
+    write("")
+    write(f"| configuration | GAI (default weights) |")
+    write("|---|---|")
+    for s in snapshots:
+        v = scorer.compute_gai(s.score.metrics, settings.GAI_WEIGHTS_DEFAULT,
+                               "d", restrict_to=common).value
+        write(f"| {s.label} | {v:.3f} |")
+    write(f"| **Full ensemble** | **{full:.3f}** |")
+    write("")
+    if full > best_single[0]:
+        write(f"**Yes, by {full - best_single[0]:+.3f}** over the best single "
+              f"module ({best_single[1]}, {best_single[0]:.3f}). This is the "
+              f"claim §9.1 calls the strongest one this project can honestly "
+              f"support, and it is an internal comparison: same backbone, same "
+              f"39 cases, same code.")
+    else:
+        write(f"**No.** {best_single[1]} scores {best_single[0]:.3f} against "
+              f"the ensemble's {full:.3f}. The ensemble wins on threat "
+              f"*coverage* — see the table above for which single module "
+              f"leaves which metric untouched — but its utility cost exceeds "
+              f"its marginal safety gain on this index.")
     write("")
 
 
