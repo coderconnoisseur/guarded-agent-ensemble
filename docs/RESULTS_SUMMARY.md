@@ -27,11 +27,10 @@ renormalised to sum to 1.
 | equal-weighted | 0.937 → 0.782 | −0.155 | 0.680 → **0.747** | +0.067 |
 | utility-leaning | 0.959 → 0.801 | −0.158 | 0.753 → **0.804** | +0.051 |
 
-*Includes `LAT`, measured 2026-09-30. The sign is the finding: **negative on
-every vector for the strong backbone, positive on every vector for the weak
-one.** Before `LAT` was measured the 27B's default-weight figure was +0.001
-rather than −0.097 — latency is a real cost and it lands hardest on the arm
-that gained least.*
+*Includes `LAT` (§4b). The sign is the finding: **negative on every vector
+for the strong backbone, positive on every vector for the weak one.** Adding
+`LAT` flipped the 27B's default-weight figure from +0.001 to −0.097 — latency
+is a real cost and it lands hardest on the arm that gained least.*
 
 **The claim:** defense value is a function of backbone capability. On a
 backbone that already resists the attacks (the 27B is compromised **0/30** by
@@ -183,6 +182,66 @@ it rather than four overlapping intervals.
 
 ---
 
+---
+
+## 4b. Latency — the cost side
+
+`LAT` = added wall-clock **per tool call**, normalised against each arm's own
+unguarded baseline, and capped at 1.0. Measured on uncached runs with the
+rate-limiter wait subtracted, so this is compute and network — not queueing.
+
+| arm | Condition A | Condition B | added | `LAT` |
+|---|---|---|---|---|
+| 27B (hosted) | 1070 ms | 1808 ms | **+738 ms** | **0.69** |
+| 3B (local) | 2183 ms | 5208 ms | **+3025 ms** | **1.00** (capped) |
+
+**The ensemble roughly doubles to triples the time per tool call.** The cause
+is not the defense code — it is that planning and verification are *themselves
+LLM calls*. Condition B makes about **4× as many model calls per case** than
+Condition A (11.6 vs 2.8, measured), and on a local backbone each one is a
+full ~2 s inference.
+
+`LAT = 1.00` on the local arm means "capped": the true ratio is +139%, i.e. the
+defended agent takes about 2.4× as long per tool call. The cap is part of §9's
+definition, not a measurement limit.
+
+### Why this matters to the headline
+
+`LAT` carries 10% of the default weight vector, and adding it moved both arms:
+
+| | without `LAT` | with `LAT` |
+|---|---|---|
+| 27B, Condition A → B | +0.001 | **−0.097** |
+| 3B, Condition A → B | +0.367 | **+0.171** |
+
+It changed the 27B arm's *sign*. An evaluation that omitted latency would have
+reported the ensemble as marginally positive on a strong backbone; including it
+shows the honest picture — on a model that does not need the defenses, all you
+pay is the cost.
+
+### Two things `LAT` deliberately does not measure
+
+- **Wall-clock on a rate-limited tier.** Rate-limiter sleep is subtracted. On
+  the hosted free tier a single case measured 60,114 ms of wall clock for
+  1,064 ms of actual compute — 98% of it was the limiter sleeping. Leaving that
+  in would have reported the queue and called it defense overhead.
+- **ShieldMCP's proxy overhead.** That paper reports ~118 ms of *local* scanning
+  cost around an unchanged call. Ours counts the extra model calls the defenses
+  make, at their real round-trip cost. The two numbers are not comparable and
+  the reports say so.
+
+### Why `LAT` is absent from the §4a isolation table
+
+A timing run is a separate uncached A-vs-B measurement, and it was run for
+bare-vs-full only — not for each of the four single-module configurations.
+§4a is therefore a 4-term index throughout (`ASR_inj`, `BU`, `UA`, `HS`), and
+§1 is the 5-term one. Putting `LAT` in one table and not the other would be
+comparing two different indices.
+
+**Source:** `results/phase6_timing_a*.json`, `results/phase6_timing_b*.json`.
+
+---
+
 ## 4a. The headline claim: the ensemble beats every single module
 
 §9.1 tier 2. Every row below is the **same backbone, the same 39 cases and the
@@ -319,6 +378,9 @@ For contrast, on the 27B both borrowed-model modules degraded **0/33** times.
   undefined for Condition A by construction, the reported index is a **5-term**
   index (`ASR_inj`, `BU`, `UA`, `HS`, `LAT`) renormalised — not the 7-term one
   §9 specifies.
+- **The ensemble costs 2–3× the time per tool call** (§4b): +738 ms on the
+  hosted arm, +3025 ms locally. Reported, not hidden — it is what makes the
+  27B arm negative.
 - The 3B arm is **not** a clean scale ablation: `qwen2.5` is a different
   generation from `qwen3.8`, so scale and training recipe are confounded.
 - The 3B arm is **not** fully local: the Harm Gate and Firewall guard models
