@@ -72,6 +72,89 @@ cannot demonstrate value against an attack that never lands.
 
 ---
 
+---
+
+## 2a. Does it survive sampling? N=3 at temperature 0.7
+
+The headline numbers are measured at `temperature = 0.0`, where the backbone
+decodes greedily. Four runs of the same prompt with the cache off returned
+**byte-identical** replies, so repeating the suite at that setting would report
+`std = 0.00` on every metric — a fact about the setting, not about the result.
+
+So the repeats were run at **temperature 0.7** instead. That makes this a
+**robustness** check, not a reproducibility one, and the two are different
+claims:
+
+- *reproducibility* — would the same run give the same answer? Yes, trivially,
+  because it is deterministic.
+- *robustness* — does the effect survive when the model is allowed to sample?
+  That is what is measured below.
+
+```bash
+python demos/variance_run.py --model qwen2.5:3b --repeats 3 --temperature 0.7
+```
+
+### Per repeat
+
+| repeat | A passed | B passed | A `ASR_inj` | B `ASR_inj` | GAI A | GAI B | Δ |
+|---|---|---|---|---|---|---|---|
+| 0 | 18/39 | 29/39 | 0.47 | **0.00** | 0.528 | 0.900 | **+0.372** |
+| 1 | 16/39 | 29/39 | 0.53 | **0.00** | 0.522 | 0.883 | **+0.361** |
+| 2 | 17/39 | 30/39 | 0.33 | **0.00** | 0.589 | 0.900 | **+0.311** |
+
+### Mean ± standard deviation, 3 repeats
+
+| metric | Condition A | Condition B |
+|---|---|---|
+| `ASR_inj` ↓ | 0.444 ± 0.102 (0.33–0.53) | **0.000 ± 0.000** |
+| `HS` ↓ | 1.000 ± 0.000 | **0.000 ± 0.000** |
+| `BU` ↑ | 1.000 ± 0.000 | 0.800 ± 0.000 |
+| `UA` ↑ | 0.778 ± 0.038 | 0.711 ± 0.038 |
+| over-refusal ↓ | 0.000 ± 0.000 | 0.077 ± 0.038 |
+| cases passed | 17.0 / 39 | **29.3 / 39** |
+| **GAI** | **0.546 ± 0.037** | **0.894 ± 0.010** |
+
+**The effect holds in every repeat.** `ASR_inj` and `HS` are both ≤ A in 3/3,
+and the GAI gap is +0.311 to +0.372 — never close to zero.
+
+### The part worth pointing at
+
+**Condition A varies; Condition B does not.** The unguarded agent's attack
+success rate swings 0.33 → 0.53 under sampling, while the guarded agent sits at
+exactly 0.00 in all three runs, with a GAI standard deviation of 0.010 against
+A's 0.037.
+
+That is the stronger reading of these numbers: the defenses are not just
+shifting the average, they are **removing the variance**. An unguarded agent is
+unsafe by an amount that depends on luck; a guarded one is not.
+
+### What sampling also exposed
+
+Temperature 0 hid two costs that show up here:
+
+| | at temp 0 | at temp 0.7 |
+|---|---|---|
+| `BU` (Condition B) | 1.00 | **0.80** |
+| over-refusal (Condition B) | 0.00 | **0.077** |
+
+Under sampling the ensemble loses one benign task and refuses ~8% of benign
+work. Both are real and neither was visible in the deterministic run.
+
+### Statistics: what these repeats do and do not buy
+
+Per repeat, the comparison is the same one §2 reports and reaches the same
+verdict each time.
+
+Pooling the three repeats gives `ASR_inj` 20/45 → 0/45 (p = 6.2 × 10⁻⁸) and
+`HS` 24/24 → 0/24 (p = 3.1 × 10⁻¹⁴). **Those pooled figures are illustrative,
+not three times the evidence.** The repeats re-run the *same 39 cases*, so the
+45 injection runs come from only 15 distinct cases — treating them as
+independent is pseudoreplication and overstates the power. The honest headline
+remains the per-repeat result: significant in each run individually, and
+directionally consistent in all three.
+
+---
+
 ## 3. Cumulative ablation — arm A, 27B (pinned)
 
 | configuration | passed | `ASR_inj` ↓ | `HS` ↓ | `BU` ↑ | `UA` ↑ | over-refusal ↓ | `MF1` ↑ |
@@ -229,7 +312,9 @@ For contrast, on the 27B both borrowed-model modules degraded **0/33** times.
   project is measured against.
 
 **Standing limitations:**
-- N=1. At ~3.3 s/call the local arm could afford N=3 (~3.5 h); not yet run.
+- **N=3 is done** on the 3B arm at temperature 0.7 (§2a): the effect holds in
+  3/3 repeats. The headline numbers themselves remain N=1 at temperature 0,
+  where the pipeline is deterministic.
 - `DIV_ASR` never built (needs a generated adversarial corpus). With `MF1`
   undefined for Condition A by construction, the reported index is a **5-term**
   index (`ASR_inj`, `BU`, `UA`, `HS`, `LAT`) renormalised — not the 7-term one

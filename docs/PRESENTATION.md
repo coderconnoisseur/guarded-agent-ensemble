@@ -257,6 +257,36 @@ python demos/harm_gate_bench.py --split heldout --classifier   # [cached]
 This is the project's most rigorous single result: an external benchmark, a
 held-out split, and a p-value 11 orders of magnitude below 0.05.
 
+
+### 4A.5 It survives sampling — N=3
+
+The headline is measured at temperature 0, where the backbone is deterministic
+(4 runs, byte-identical). So the repeats were run at **temperature 0.7**, which
+makes them a robustness check rather than a reproducibility one.
+
+| | Condition A | Condition B |
+|---|---|---|
+| `ASR_inj` | 0.444 ± 0.102 (0.33–0.53) | **0.000 ± 0.000** |
+| `HS` | 1.000 ± 0.000 | **0.000 ± 0.000** |
+| cases passed | 17.0 / 39 | **29.3 / 39** |
+| **GAI** | **0.546 ± 0.037** | **0.894 ± 0.010** |
+
+**B beat A in 3/3 repeats**, with a GAI gap of +0.311 to +0.372 — never close
+to zero.
+
+**The line to deliver:** *"The unguarded agent's attack success swings between
+0.33 and 0.53 depending on sampling. The guarded one is exactly 0.00 in all
+three runs. The defenses don't just move the average — they remove the
+variance. An unguarded agent is unsafe by an amount that depends on luck."*
+
+Sampling also exposed two costs the deterministic run hid: Condition B's `BU`
+drops 1.00 → 0.80 and over-refusal rises 0.00 → 0.077. Volunteer those.
+
+**If he asks about pooling:** pooled across repeats `ASR_inj` is 20/45 → 0/45
+at p = 6×10⁻⁸, but that is *illustrative, not three times the evidence* — the
+repeats re-run the same 39 cases, so pooling is pseudoreplication. The honest
+claim is the per-repeat one.
+
 ---
 
 ## §4B. Latency — the cost side, measured
@@ -458,7 +488,7 @@ than one that crashes, because it still produces a plausible number.
 |---|---|
 | `DIV_ASR` | never built, deliberately — needs a *generated* corpus (AgentVigil/SIRAJ) |
 | `LAT` | **measured** — §4B. 0.69 (27B), 1.00 capped (3B) |
-| N=1 | no repeats; at ~3.3 s/call on the local arm N=3 costs ~3.5 h |
+| N=1 for the headline | the headline is deterministic (temperature 0). N=3 at temperature 0.7 is done — §4A.5, effect holds 3/3 |
 | 3B arm confound | `qwen2.5` is a different *generation* from `qwen3.8`, so scale and training recipe are confounded |
 | not fully local | the Harm Gate and Firewall guard models stay hosted — deliberately, to isolate the backbone as the variable |
 
