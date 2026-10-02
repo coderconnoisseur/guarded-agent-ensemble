@@ -1462,8 +1462,17 @@ cost no model calls beyond a smoke test.
   current 3B-vs-27B comparison carries. `OLLAMA_MODEL_CHAIN` and
   `local_probe.py` already handle adding an arm; `frozen_ablation.py --model`
   writes backbone-scoped files so nothing overwrites.
-- **The paper.** The engineering is integration and a reviewer will say so. The
-  publishable claims are the three findings in §12.1 plus the methods angle in
-  §12.3. **Do a related-work search early** — if "defenses that borrow the
-  backbone degrade with it" is already published, the plan should change before
-  months go into it, not after.
+- **The paper. READ `docs/RELATED_WORK.md` FIRST — the search was done on
+  2026-10-03 and the answer was bad.** All three claims proposed as
+  contributions are substantially published: "higher baseline vulnerability →
+  larger absolute gains" (arXiv 2511.15759), "don't let the model judge itself"
+  (Lakera; and judge-capability effects in the judge-reliability literature),
+  and "layered beats single" (2511.15759's own ablation). Do not claim novelty
+  for any of them.
+
+  Two honest routes remain. (a) A replication-and-negative-result paper, which
+  is what the current data supports. (b) The sharper version of the capability
+  claim — *there is a backbone capability above which this ensemble is net
+  harmful* — which 2511.15759 cannot state because it reports ASR and utility
+  separately rather than as a composite. Route (b) needs AgentDojo plus 3-4
+  backbone points, i.e. exactly §12.4 and §12.5. It is the better paper.
