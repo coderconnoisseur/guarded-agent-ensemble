@@ -1,35 +1,33 @@
 # Handoff — Guarded Agent Ensemble
 
-**Updated:** 2026-09-27 · **Repo:** https://github.com/coderconnoisseur/guarded-agent-ensemble (public)
-**Branch:** `master` · **45 commits** · **635 tests passing**
-**Phases 0–5 complete**, plus the §5.2 coverage expansion, the §5.1
-frozen-suite ablation, confidence intervals on every rate (§5.5), the
-external-benchmark work (§5.2d/e) and the replay harness (§5.6).
-**Phase 6 is complete** on two backbones. `results/report.md` is the pinned
-27B arm and `results/report_qwen2-5-3b.md` is a second, deliberately weaker
-local arm (§10, §11).
+**Updated:** 2026-10-03 · **Repo:** https://github.com/coderconnoisseur/guarded-agent-ensemble (public)
+**Branch:** `master` · **55 commits** · **665 tests passing**
 
-The pinned arm's headline is unflattering and correct: **the ensemble does not
-improve the GAI composite there** — it peaks two modules in and falls, for the
-reason §5.1a gave. The local arm is where the project's claim actually lands:
-**ASR_inj 0.40 → 0.00 (p=0.008) and HS 1.00 → 0.00 (p<0.001)**, the first
-significant before/after it has produced, on the *same 39 cases*. Only the
-baseline rate changed.
+**Phases 0–6 are complete on two backbones**, plus `LAT`, an N=3 robustness
+run, §9.1 tier-2 single-module isolation, and two fixes that turned the
+ensemble from losing to its own best module into beating it. **6 of the 7
+sub-metrics are reported; `DIV_ASR` is the only one unbuilt.**
 
-Read them together, not separately. The pair is the finding: **defense value
-is a function of backbone capability**, and the defenses that borrow the
-backbone degrade with it (§11.3).
+> ### START HERE
+>
+> 1. **§4a** if you are in a fresh worktree — five tests fail without the
+>    gitignored assets.
+> 2. **§12** for where the project actually is and what to do next. The
+>    current task is the **AgentDojo spike (§12.4)**.
+> 3. `docs/RESULTS_SUMMARY.md` and `docs/PRESENTATION.md` are the current
+>    truth for every number. They were verified against the raw JSON; do not
+>    re-derive figures from `results/*.json` and do not trust numbers quoted
+>    in §5–§11 below, which are historical and in several places superseded.
+>
+> §1–§11 are the build journal, kept because the failures in them are the
+> most useful thing in this file. §12 supersedes them on any disagreement.
 
-The clearest next job is §9.5: **§9.1 tier 2 single-module isolation was
-not run.** It is ~1,076 requests and ~9 h at 2/min, and it is the one
-measurement that would let the project claim the ensemble is more than the
-sum of its parts rather than infer it.
-
-`CLAUDE.md` at the repo root is the full spec and is auto-loaded as project
-memory. This file only covers what a fresh session cannot reconstruct from it:
-decisions made, measurements taken, and traps already fallen into.
-
----
+The short version of the result: **the ensemble helps a weak backbone and
+costs a strong one.** On `qwen2.5:3b` it takes `ASR_inj` 0.40 → 0.00
+(p = 0.0084) and `HS` 1.00 → 0.00 (p = 0.0001) and the composite +0.171; on the
+pinned 27B the composite moves −0.097, because that backbone resists the
+attacks unaided and all the defenses can do is cost latency. Both are reported.
+The pair is the finding.
 
 ## 1. Read this before touching anything
 
@@ -1334,3 +1332,138 @@ open on ≥10% of its runs.
   not been run.
 - **`MF1 = 0.31` is over 9 rulings.** It says the 3B is a poor ToM judge, not
   how poor.
+
+---
+
+## 12. Where the project actually is, and what comes next
+
+**Phase 6 is finished on both arms.** Everything CLAUDE.md asks for exists
+except `DIV_ASR`. The numbers are in `docs/RESULTS_SUMMARY.md` (the handout)
+and `docs/PRESENTATION.md` (the walkthrough, with verified commands and
+file/line references). Do not re-derive them from the raw JSON — those two
+documents are the current truth and every figure in them was checked against
+the source.
+
+### 12.1 Headline state, one table
+
+| | 27B hosted (pinned) | 3B local (`qwen2.5:3b`) |
+|---|---|---|
+| `ASR_inj` A → B | 0.07 → 0.00 (p = 0.500) | **0.40 → 0.00 (p = 0.0084)** |
+| `HS` A → B | 0.25 → 0.00 (p = 0.233) | **1.00 → 0.00 (p = 0.0001)** |
+| `LAT` | 0.69 (+738 ms/tool call) | 1.00 capped (+3025 ms) |
+| GAI A → B (default weights) | 0.927 → 0.830 (**−0.097**) | 0.629 → **0.800** (**+0.171**) |
+| N=3 at temperature 0.7 | not run | **effect holds 3/3** |
+
+Sub-metrics reported: **6 of 7**. `DIV_ASR` is the only one unbuilt.
+
+Three claims the project can defend, and one it cannot:
+
+- ✅ Condition B beats Condition A (internal, controlled, significant on 3B).
+- ✅ The ensemble beats **every single one of its own modules** — GAI 0.933 vs
+  Harm-Gate-only's 0.817 on the 4-term index (§11, tier 2).
+- ✅ Defense value scales **inversely** with backbone capability.
+- ❌ That any of this beats the source papers' published numbers. It does not
+  and cannot — different backbones, different benchmark scale. `CLAUDE.md`
+  §9.1 and `docs/PRESENTATION.md` §0 both say so. **§12.4 is the work that
+  would lift this restriction.**
+
+### 12.2 What was done after Phase 6 closed
+
+- **Two fixes that turned the ensemble from losing to winning.** It scored
+  0.783 against Harm-Gate-only's 0.817 and *lost*. (a) The Planner rejected
+  whole plans over un-callable nodes — `qwen2.5:3b` emits a sentinel
+  `{"tool": "None"}` and invents pseudo-tools (`string.split`,
+  `process_tasks`); those are now pruned rather than fatal. (b) `ConditionB`
+  forced the misalignment judge to be the backbone; it now defaults to the
+  configured judge. Result: `BU` 0.20 → 1.00, `MF1` 0.31 → 0.81, GAI 0.783 →
+  0.933, with `ASR_inj`/`HS` held at 0.00.
+- **`LAT` measured** (§12.1). It required a `case_latency_ms` field because
+  the agent-loop timer and the whole-case queue counter bracketed different
+  spans; subtracting one from the other gave negative time.
+- **N=3 at temperature 0.7.** At temperature 0 the backbone is deterministic —
+  four runs returned byte-identical replies — so repeating at the project's own
+  settings would have reported `std = 0.00` as if it meant robustness. The
+  repeats therefore run at 0.7 and are labelled a robustness check, not a
+  reproducibility one. `demos/variance_run.py`.
+- **`docs/PRESENTATION.md`** — the walkthrough for defending the project.
+
+### 12.3 The failure mode this project keeps producing
+
+Worth internalising before writing any new code here. **Four separate times**
+something was accepted and silently did nothing, and every time it produced a
+plausible number:
+
+| what | symptom |
+|---|---|
+| Misalignment judge sent to the wrong provider | 404'd, failed open 15/39 runs, reported "the module changed nothing" |
+| `isolation_run` ignored `--model` | would have measured the wrong backbone |
+| `timing_run` ignored `--model` | produced a 27B timing run when asked for 3B |
+| Harm Gate rubric | tuned and reported on the same six cases; measured 2/176 when finally checked |
+
+Plus two timing numbers that measured the wrong thing (rate-limiter sleep;
+cold model load). Guards now exist for each: `accept_row`,
+`accept_module_health`, backbone-scoped filenames, and a scorer that refuses
+rather than estimates. **Assume there are more.** Every one of these made
+results look better before it was caught.
+
+### 12.4 NEXT: the AgentDojo spike
+
+The professor asked whether the work has been run on a research-level
+benchmark. The honest answer is **partially**:
+
+- **AgentHarm — yes, properly.** 352 public prompts fetched by
+  `scripts/fetch_agentharm.py`, split dev/held-out by `id_original`, Harm Gate
+  scored on the half no tuning saw. p = 2.1e-13. This one is done right.
+- **AgentDojo — no.** `src/eval/attacks.py` vendors their five *attack
+  templates* (verbatim, MIT, attributed) and the generator drops them into
+  **our** 39 hand-written cases. We have never run inside AgentDojo's own
+  environment, task suite or scoring harness.
+
+**Why this is the highest-value remaining work.** AgentDojo is the benchmark
+IPIGuard and ShieldMCP report their headline numbers against. Running on it is
+what would lift the ❌ in §12.1 — it turns "internal comparison only" into
+"comparable with published results", which is roughly the difference between a
+workshop paper and one a journal takes seriously.
+
+**The spike, in order:**
+
+1. Confirm the package: `pip install agentdojo`, read its current agent-pipeline
+   interface. **Do not estimate before reading it** — the interface has changed
+   across releases and a guess here would set the whole plan wrong.
+2. Establish what an adapter costs. Our agent is a prompted-JSON ReAct loop
+   (`src/agent/loop.py`, CLAUDE.md §5.3) over our own `ToolRegistry`. AgentDojo
+   supplies its own tools and environments. The adapter is the bridge; its size
+   is the thing the spike has to answer.
+3. Check whether the defense wrappers survive the move. Enforcement lives in
+   registry wrappers (`base → Misalignment → PlanEnforcing → Firewall`), which
+   is deliberate — it keeps the agent loop byte-identical between conditions.
+   If AgentDojo owns tool dispatch, that layering has to be re-expressed, and
+   **that is the main technical risk**.
+4. Report back with an estimate and a recommendation, before writing the
+   adapter.
+
+**Budget:** the spike itself is reading and a small amount of code; it should
+cost no model calls beyond a smoke test.
+
+### 12.5 The other three asks, and why they are ordered after the spike
+
+- **`DIV_ASR`** (~1 h, buildable now). Seeds → LLM mutator → keep the mutations
+  that beat Condition A → score Condition B. The mutator **must be a different
+  model from the backbone**, or it measures a model's ability to fool itself;
+  use the hosted 27B against the 3B. *Recommended after AgentDojo*, so it
+  mutates AgentDojo seeds rather than our 15 hand-written ones — otherwise it
+  is the weaker version of coverage the benchmark already provides. If the
+  professor wants 7/7 complete sooner, building it first is defensible.
+- **A third backbone on the professor's machine** (8 GB VRAM, 32–128 GB RAM —
+  **confirm these before planning**). This is the biggest unlock for the paper:
+  it turns "defense value scales with backbone capability" from a two-point
+  anecdote into a curve. `qwen2.5` at 3B / 7B / 14B holds the training recipe
+  constant and varies only scale, which also fixes the generation confound the
+  current 3B-vs-27B comparison carries. `OLLAMA_MODEL_CHAIN` and
+  `local_probe.py` already handle adding an arm; `frozen_ablation.py --model`
+  writes backbone-scoped files so nothing overwrites.
+- **The paper.** The engineering is integration and a reviewer will say so. The
+  publishable claims are the three findings in §12.1 plus the methods angle in
+  §12.3. **Do a related-work search early** — if "defenses that borrow the
+  backbone degrade with it" is already published, the plan should change before
+  months go into it, not after.
