@@ -1408,6 +1408,12 @@ results look better before it was caught.
 
 ### 12.4 NEXT: the AgentDojo spike
 
+> **Spike done 2026-10-03 — read `docs/AGENTDOJO_SPIKE.md`.** The registry
+> layering survives the move; the risk is that the Firewall heuristics do not
+> generalise (0% recall on banking, 33% false positives on clean workspace
+> outputs, measured offline at zero model calls). Recommendation: staged, behind
+> a go/no-go gate. Awaiting the user's decision; the adapter is not started.
+
 The professor asked whether the work has been run on a research-level
 benchmark. The honest answer is **partially**:
 
