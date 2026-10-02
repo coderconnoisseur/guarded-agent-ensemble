@@ -450,3 +450,72 @@ class TestQueueAccounting:
         after_first = client.queued_ms_total
         client.chat([{"role": "user", "content": "two"}], force_refresh=True)
         assert client.queued_ms_total > after_first
+
+
+# ---------------------------------------------------------------------------
+# Limiter scope
+# ---------------------------------------------------------------------------
+
+GUARD = settings.FIREWALL_GUARD_MODEL
+BACKBONE = "qwen/qwen3.8-27b"
+
+
+class TestLimiterScope:
+    """Groq's rate limits are per model (measured: the guard model's 429 names
+    the model and reports its own RPM 30). One limiter per provider made the
+    auxiliary models queue behind the backbone's 2/min."""
+
+    def test_groq_models_get_separate_limiters(self, isolated):
+        client = make_client(
+            lambda r: httpx.Response(200, json=completion("hi")),
+            model_chain=[("groq", BACKBONE), ("groq", "qwen/qwen3.6-27b")],
+        )
+        assert client._limiter_for("groq", BACKBONE) is not client._limiter_for(
+            "groq", "qwen/qwen3.6-27b"
+        )
+        assert client._limiter_for("groq", GUARD) is not client._limiter_for(
+            "groq", BACKBONE
+        )
+
+    def test_unmeasured_providers_keep_one_account_limiter(self, isolated):
+        client = make_client(
+            lambda r: httpx.Response(200, json=completion("hi")),
+            model_chain=["a", "b"],
+        )
+        assert client._limiter_for("openrouter", "a") is client._limiter_for(
+            "openrouter", "b"
+        )
+
+    def test_per_model_rates_come_from_the_measured_overrides(self):
+        assert settings.rate_limit_for("groq", BACKBONE) == settings.GROQ_RATE_LIMIT_PER_MINUTE
+        for model, rate in settings.GROQ_MODEL_RATE_LIMITS.items():
+            assert settings.rate_limit_for("groq", model) == rate
+            assert rate < 30, "must stay under the measured RPM 30"
+
+    def test_aux_model_does_not_wait_behind_a_saturated_backbone(
+        self, isolated, monkeypatch
+    ):
+        clock = {"t": 1000.0}
+        slept: list[float] = []
+        monkeypatch.setattr("src.llm.client.time.monotonic", lambda: clock["t"])
+        def fake_sleep(seconds: float) -> None:
+            slept.append(seconds)
+            clock["t"] += seconds  # or a queued call would spin forever
+
+        monkeypatch.setattr("src.llm.client.time.sleep", fake_sleep)
+        client = make_client(
+            lambda r: httpx.Response(200, json=completion("0.01")),
+            model_chain=[("groq", BACKBONE)],
+        )
+        # Fill every limiter that exists before the guard is first used -
+        # through the public dict, so this fails on the old per-provider
+        # client for the right reason (it sleeps), not an AttributeError.
+        for limiter in client.limiters.values():
+            for _ in range(limiter.per_minute):
+                limiter.acquire()
+
+        client.chat(
+            [{"role": "user", "content": "page text"}],
+            model=GUARD, provider="groq", max_tokens=16,
+        )
+        assert slept == [], "the guard model queued behind the backbone"

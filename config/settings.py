@@ -200,6 +200,30 @@ GROQ_DAILY_REQUEST_CAP = int(_setting("GROQ_DAILY_REQUEST_CAP", "1000") or 1000)
 # refuses requests rather than from the one the headers advertise.
 GROQ_RATE_LIMIT_PER_MINUTE = 2
 
+# Per-model overrides of the 2/min above. MEASURED 2026-10-03.
+#
+# Groq's rate limits are per MODEL, not per account: a 30-call burst against
+# the guard model was refused on call 31 with "Rate limit reached for model
+# `meta-llama/llama-prompt-guard-2-86m` ... requests per minute (RPM): Limit
+# 30". The client used to keep one limiter per *provider*, so these auxiliary
+# models queued behind the backbone's 2/min - the binding constraint on a
+# Condition B run even with the backbone local (docs/AGENTDOJO_SPIKE.md §5).
+#
+# The 2/min backbone figure is an OTPM ceiling (1000 output tokens/min against
+# 400 reserved per call), and it is NOT shared by these models: the safeguard
+# model accepted a 1500-token reservation, which a 1000 OTPM limit refuses.
+#
+#   llama-prompt-guard-2-86m : RPM 30, TPM 15000, 14400/day. Inputs are capped
+#       at FIREWALL_GUARD_MAX_CHARS (~300 tokens), so 25/min stays under both
+#       with headroom, as OpenRouter's 15 sits under its 20.
+#   gpt-oss-safeguard-20b    : TPM 8000, 1000/day. A call reserves
+#       HARM_GATE_CLASSIFIER_MAX_TOKENS=512 plus a prompt of up to ~600, so
+#       ~1100 tokens each; 6/min is 6600 of the 8000.
+GROQ_MODEL_RATE_LIMITS: dict[str, int] = {
+    "meta-llama/llama-prompt-guard-2-86m": 25,
+    "openai/gpt-oss-safeguard-20b": 6,
+}
+
 # Purpose-built safety models on the same key, for later phases rather than
 # the backbone. Recorded here so the phase that needs them does not have to
 # rediscover them:
@@ -471,6 +495,11 @@ PROVIDER_LIMITS: dict[str, dict] = {
         "daily_cap": GROQ_DAILY_REQUEST_CAP,
         "rate_limit_per_minute": GROQ_RATE_LIMIT_PER_MINUTE,
         "budget_scope": "model",
+        # Measured per model (see GROQ_MODEL_RATE_LIMITS). Providers without
+        # this key keep one limiter for the whole account - the conservative
+        # default where the scope has not been measured.
+        "rate_scope": "model",
+        "model_rate_limits": GROQ_MODEL_RATE_LIMITS,
     },
     # Not a quota - there is no provider to impose one. The numbers exist so
     # the shared limiter/budget machinery has something to read.
@@ -489,6 +518,21 @@ def budget_key(provider: str, model: str) -> str:
     """
     scope = PROVIDER_LIMITS.get(provider, {}).get("budget_scope", "account")
     return f"{provider}:{model}" if scope == "model" else provider
+
+
+def limiter_key(provider: str, model: str) -> str:
+    """Which rate limiter a call waits on: per model only where measured so."""
+    scope = PROVIDER_LIMITS.get(provider, {}).get("rate_scope", "account")
+    return f"{provider}:{model}" if scope == "model" else provider
+
+
+def rate_limit_for(provider: str, model: str) -> int:
+    """Calls per minute for one (provider, model), override first."""
+    limits = PROVIDER_LIMITS.get(provider, {})
+    overrides = limits.get("model_rate_limits", {})
+    if model in overrides:
+        return overrides[model]
+    return limits.get("rate_limit_per_minute", RATE_LIMIT_PER_MINUTE)
 
 
 def api_key_for(provider: str) -> str:

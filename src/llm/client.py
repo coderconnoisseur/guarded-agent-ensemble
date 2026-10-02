@@ -350,9 +350,7 @@ class LLMClient:
                     "rate_limit_per_minute": settings.RATE_LIMIT_PER_MINUTE,
                 },
             )
-            self.limiters.setdefault(
-                provider_name, RateLimiter(limits["rate_limit_per_minute"])
-            )
+            self._limiter_for(provider_name, model_name)
             # Keyed by whatever the provider's quota actually applies to:
             # OpenRouter's 50/day covers the account, Gemini's 20/day covers
             # one model, so they cannot share a counter.
@@ -425,6 +423,19 @@ class LLMClient:
     def current_provider(self) -> str:
         return self.chain[self._index][0]
 
+    def _limiter_for(self, provider: str, model: str) -> RateLimiter:
+        """The limiter a (provider, model) pair waits on, created on demand.
+
+        Keyed like the budgets: per model where the provider's rate limit is
+        measured per model (Groq), one per account otherwise. A single
+        per-provider limiter made Groq's auxiliary models - 30 RPM for the
+        guard model - queue behind the backbone's 2/min.
+        """
+        key = settings.limiter_key(provider, model)
+        if key not in self.limiters:
+            self.limiters[key] = RateLimiter(settings.rate_limit_for(provider, model))
+        return self.limiters[key]
+
     def budget_for(self, provider: str, model: str) -> BudgetTracker:
         """The counter a (provider, model) pair is charged against.
 
@@ -442,9 +453,7 @@ class LLMClient:
                     "rate_limit_per_minute": settings.RATE_LIMIT_PER_MINUTE,
                 },
             )
-            self.limiters.setdefault(
-                provider, RateLimiter(limits["rate_limit_per_minute"])
-            )
+            self._limiter_for(provider, model)
             self.budgets[key] = BudgetTracker(
                 settings.LLM_BUDGET_FILE,
                 limits["daily_cap"],
@@ -489,7 +498,7 @@ class LLMClient:
         last_error = ""
 
         for attempt in range(settings.MAX_RETRIES):
-            slept = self.limiters[name].acquire()
+            slept = self._limiter_for(name, model).acquire()
             # Accumulated here rather than at the call site so a sleep that
             # is followed by an error - a budget stop, or a model failure
             # that falls through to the next backend - is still counted.

@@ -220,6 +220,16 @@ The guard model (14,400/day) and the safeguard classifier share the backbone's
 the limiter alone**, even with the backbone local. A per-model limiter is a
 prerequisite, and its rate must be measured, not assumed.
 
+> **Fixed 2026-10-03** (stage 0, first item). Measured: Groq's limits are per
+> model — a 30-call burst on the guard model was refused on call 31 with
+> "Rate limit reached for model `llama-prompt-guard-2-86m` … RPM: Limit 30" —
+> and the safeguard model accepted a 1500-token reservation, so the backbone's
+> 1000-OTPM ceiling is not shared. Limiters are now keyed per model on Groq:
+> guard **25/min**, safeguard **6/min** (TPM-bound), backbone unchanged at 2.
+> Measurements in `config/settings.py` beside `GROQ_MODEL_RATE_LIMITS`.
+> The demos' `--dry-run` estimates still price every call at 2/min, so they
+> now overestimate wall clock.
+
 **Realistic plan:** full v1.2.2 on the 3B arm only (~2–3 days of machine time
 once the limiter is fixed); a stratified subset on the 27B, labelled as such.
 
