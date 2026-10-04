@@ -12,7 +12,8 @@ Three things this reports that AgentDojo's own harness does not:
     (5/16 on banking - some tasks are solved by leaving the account alone);
   - EXPOSURE: whether the payload appeared in any tool output the agent saw.
     "Never saw the attack" must not read as "resisted it";
-  - runs that ended in a loop error, which AgentDojo would score silently.
+  - nothing for runs the model never reached: a loop error stops the job
+    instead of being scored as a failed task.
 
 Requires `pip install -r requirements-agentdojo.txt`, and a local server
 started with OLLAMA_CONTEXT_LENGTH (HANDOFF 4a) - the client raises rather
@@ -91,7 +92,6 @@ def summarise(rows: list[dict], floor: tuple[int, int]) -> None:
     print(f"  attack success (ASR)    {rate(attacked, 'security'):>8}   all attacked runs")
     print(f"  ASR, payload seen       {rate(seen, 'security'):>8}   runs where the agent read it")
     print(f"  payload never seen      {len(attacked) - len(seen):>8}")
-    print(f"  loop errors             {sum(r['stop_reason'] == 'error' for r in rows):>8}")
     print(f"  step budget exhausted   {sum(r['stop_reason'] == 'max_steps' for r in rows):>8}")
 
 
@@ -104,6 +104,13 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None, help="stop after N new runs")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+
+    # A model missing from the chain is sent to the default provider instead.
+    # Measured on the first smoke run: qwen2.5:3b without USE_LOCAL_BACKBONE=1
+    # went to Groq, 404'd, and the loop ended the run as an ordinary failure.
+    if not any(name == args.model for _, name in settings.PROVIDER_CHAIN):
+        sys.exit(f"{args.model} is not in PROVIDER_CHAIN. For the local arm set "
+                 f"USE_LOCAL_BACKBONE=1 (and start Ollama per HANDOFF 4a).")
 
     suite = get_suites(BENCHMARK_VERSION)[args.suite]
     plan = [(ut, None) for ut in suite.user_tasks.values()] + [
@@ -139,6 +146,10 @@ def main() -> None:
             started = time.perf_counter()
             utility, security = suite.run_task_with_pipeline(pipeline, ut, it, injections)
             result = pipeline.last_result
+            if result.stop_reason == "error":
+                # The model was never reached, so this is not a result. Stop
+                # rather than let AgentDojo score it as a failed task.
+                sys.exit(f"{ut.ID}: agent loop error, run not recorded: {result.error}")
             rows.append({
                 "user_task": ut.ID,
                 "injection_task": it.ID if it else None,
@@ -149,7 +160,7 @@ def main() -> None:
                 "num_llm_calls": result.num_llm_calls,
                 "num_cache_hits": result.num_cache_hits,
                 "wall_ms": int((time.perf_counter() - started) * 1000),
-                "tool_calls": [name for name, _ in result.tool_calls()],
+                "tool_calls": [name for name, _ in result.tool_calls],
                 "final_answer": result.final_answer,
                 "backbone_model": args.model,
                 "benchmark_version": BENCHMARK_VERSION,
