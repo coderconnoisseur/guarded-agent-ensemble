@@ -42,7 +42,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from config import settings
-from src.llm.providers import Provider, build_providers
+from src.llm.providers import ContextTruncatedError, Provider, build_providers  # noqa: F401 - re-exported
 
 logger = logging.getLogger(__name__)
 
@@ -655,6 +655,7 @@ class LLMClient:
                 if cached is not None:
                     logger.debug("Cache hit for %s (%s)", candidate, key[:12])
                     backend = self.providers[provider_name]
+                    backend.check_prompt_intact(messages, cached)
                     reason, filtered = backend.finish_signal(cached)
                     return LLMResponse(
                         content=backend.extract_content(cached),
@@ -716,6 +717,9 @@ class LLMClient:
                 logger.error("Model %s returned nothing usable: %s", candidate, exc)
                 continue
 
+            # Before caching: a reply to a truncated prompt must never be
+            # stored, or every later replay would inherit it silently.
+            backend.check_prompt_intact(messages, payload)
             if caching_on:
                 self.cache.put(key, payload)
             reason, filtered = backend.finish_signal(payload)

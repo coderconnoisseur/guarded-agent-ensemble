@@ -192,6 +192,20 @@ python scripts/fetch_agentharm.py        # external/, one-time
 If the main checkout is behind, a recycled worktree directory may still hold
 newer data — this session recovered the whole frozen ablation that way.
 **Check `.claude/worktrees/*/results/` before re-running anything expensive.**
+
+**Starting the local model — use exactly this** (both variables matter):
+
+```bash
+OLLAMA_MODELS='D:\ollama' OLLAMA_CONTEXT_LENGTH=24576 ollama serve
+```
+
+Without `OLLAMA_CONTEXT_LENGTH` the server's window is 4096, and a longer
+prompt is cut to 2050 tokens *from the start* — system prompt and tool
+catalogue gone — with no error. Measured 2026-10-04; the client now raises
+`ContextTruncatedError` when it sees that, rather than scoring the result.
+Details beside `settings.OLLAMA_CONTEXT_LENGTH`. Every number already in
+`results/` predates the fix and is unaffected (all cached 3B prompts ≤ 2782
+tokens).
 The cache is what makes demos free; without it every command costs real
 requests at 2/minute.
 

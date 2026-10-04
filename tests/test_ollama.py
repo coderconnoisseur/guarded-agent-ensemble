@@ -436,3 +436,74 @@ class TestTimingAndIsolationHonourTheBackbone:
         from src.eval.report import _latency
 
         assert "backbone" in inspect.signature(_latency).parameters
+
+
+# ---------------------------------------------------------------------------
+# Silent prompt truncation (settings.OLLAMA_CONTEXT_LENGTH)
+# ---------------------------------------------------------------------------
+
+from src.llm.client import LLMClient, LLMError  # noqa: E402
+from src.llm.providers import ContextTruncatedError  # noqa: E402
+
+
+def _reply(prompt_tokens: int) -> dict:
+    return {
+        "model": "qwen2.5:3b",
+        "choices": [{"message": {"role": "assistant", "content": "Final: ok"},
+                     "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 3},
+    }
+
+
+def _msgs(chars: int) -> list[dict]:
+    return [{"role": "user", "content": "x" * chars}]
+
+
+class TestTruncationGuard:
+    """Measured: Ollama cuts a prompt over its window to exactly 2050 tokens,
+    from the start, and answers without an error."""
+
+    def test_intact_prompt_passes(self):
+        OllamaProvider().check_prompt_intact(_msgs(10_000), _reply(2578))
+
+    def test_the_measured_truncation_size_raises(self):
+        with pytest.raises(ContextTruncatedError, match="OLLAMA_CONTEXT_LENGTH"):
+            OllamaProvider().check_prompt_intact(_msgs(8_000), _reply(2050))
+
+    def test_too_many_chars_per_token_raises(self):
+        # The measured 10k-token prompt: 31,796 chars reported as 2050 tokens
+        # would trip both signals; this isolates the ratio one.
+        with pytest.raises(ContextTruncatedError):
+            OllamaProvider().check_prompt_intact(_msgs(31_796), _reply(3000))
+
+    def test_the_measured_intact_ceiling_passes(self):
+        # 21,217 chars / 3414 tokens = 6.2, the densest intact prompt measured.
+        OllamaProvider().check_prompt_intact(_msgs(21_217), _reply(3414))
+
+    def test_hosted_providers_do_not_check(self):
+        GroqProvider().check_prompt_intact(_msgs(100_000), _reply(2050))
+
+    def test_it_is_not_an_llm_error(self):
+        # Defenses fail open on LLMError; a truncation must stop the run.
+        assert not issubclass(ContextTruncatedError, LLMError)
+
+
+class TestTruncationThroughTheClient:
+    def _client(self, tmp_path, monkeypatch, prompt_tokens):
+        monkeypatch.setattr(settings, "LLM_CACHE_DIR", tmp_path / "cache")
+        monkeypatch.setattr(settings, "LLM_BUDGET_FILE", tmp_path / "budget.json")
+        client = LLMClient(model_chain=[("ollama", "qwen2.5:3b")])
+        client._client = httpx.Client(transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json=_reply(prompt_tokens))))
+        return client
+
+    def test_a_truncated_reply_raises_and_is_never_cached(self, tmp_path, monkeypatch):
+        client = self._client(tmp_path, monkeypatch, 2050)
+        with pytest.raises(ContextTruncatedError):
+            client.chat(_msgs(8_000))
+        cache_dir = tmp_path / "cache"
+        assert not cache_dir.exists() or not any(cache_dir.iterdir())
+
+    def test_an_intact_reply_is_returned(self, tmp_path, monkeypatch):
+        client = self._client(tmp_path, monkeypatch, 2578)
+        assert client.chat(_msgs(10_000)).content == "Final: ok"

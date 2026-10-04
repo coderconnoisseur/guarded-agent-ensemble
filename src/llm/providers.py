@@ -34,6 +34,17 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
+class ContextTruncatedError(RuntimeError):
+    """The backend served a reply to a prompt it had silently truncated.
+
+    Deliberately NOT an `LLMError`. Every defense module fails open on an
+    `LLMError` (a provider outage must not crash a run), so raising one here
+    would turn a truncated prompt into a defense that quietly did nothing -
+    the failure this project keeps finding. A truncation is a configuration
+    bug, and it must stop the run.
+    """
+
+
 class Provider(ABC):
     """Translates a chat request to and from one backend's wire format."""
 
@@ -68,6 +79,15 @@ class Provider(ABC):
     def model_reported(self, payload: dict[str, Any], fallback: str) -> str:
         """Which model the backend says actually served the request."""
         return payload.get("model") or fallback
+
+    def check_prompt_intact(
+        self, messages: list[dict[str, Any]], payload: dict[str, Any]
+    ) -> None:
+        """Raise ContextTruncatedError if the reply shows a truncated prompt.
+
+        A no-op for hosted backends, which reject an over-long prompt with an
+        error rather than silently cutting it.
+        """
 
     def finish_signal(self, payload: dict[str, Any]) -> tuple[str, bool]:
         """Return (finish_reason, provider_filter_fired).
@@ -303,6 +323,31 @@ class OllamaProvider(OpenAICompatibleProvider):
         if body.get("max_tokens") is None or body["max_tokens"] < floor:
             body["max_tokens"] = floor
         return body
+
+    def check_prompt_intact(
+        self, messages: list[dict[str, Any]], payload: dict[str, Any]
+    ) -> None:
+        """Ollama cuts an over-long prompt from the START and answers anyway.
+
+        Measured, with the numbers and the fix, beside
+        `settings.OLLAMA_CONTEXT_LENGTH`. The system prompt and tool catalogue
+        are what get dropped, so a truncated call is not a weaker answer to
+        the same question - it is an answer to a different question.
+        """
+        usage = payload.get("usage") or {}
+        tokens = usage.get("prompt_tokens")
+        if not tokens:
+            return
+        chars = sum(len(str(m.get("content") or "")) for m in messages)
+        ratio = chars / tokens
+        if tokens in settings.OLLAMA_TRUNCATED_PROMPT_TOKENS or (
+            ratio > settings.OLLAMA_MAX_CHARS_PER_TOKEN
+        ):
+            raise ContextTruncatedError(
+                f"Ollama reported {tokens} prompt tokens for {chars} characters "
+                f"({ratio:.1f} chars/token): the prompt was truncated. Start the "
+                f"server with OLLAMA_CONTEXT_LENGTH={settings.OLLAMA_CONTEXT_LENGTH}."
+            )
 
 
 # ---------------------------------------------------------------------------

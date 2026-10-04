@@ -200,6 +200,20 @@ workspace at all.** On the local arm, Ollama's default context window would
 truncate these prompts **silently** — `num_ctx` is not set anywhere in our
 client. Must be set and verified before a single number is trusted.
 
+> **Fixed 2026-10-04** (stage 0, second item). Measured: Ollama 0.34.4's
+> default window is 4096, and a longer prompt is cut to exactly 2050 tokens
+> from the start — a 10k-token prompt lost its opening and the model could not
+> recall it. `num_ctx` sent through the `/v1` shim is **ignored** (both as
+> `options.num_ctx` and top-level), so it is set on the server:
+> `OLLAMA_CONTEXT_LENGTH=24576`, which held an 18,254-token prompt intact at a
+> cost of 3 layers off the 4 GB GPU (short call 6.8 s → 7.2 s). The client now
+> raises `ContextTruncatedError` — deliberately not an `LLMError`, which the
+> defenses fail open on — and caught the live misconfiguration on its first
+> run. Existing 3B results are clean: 423 cached calls, max 2782 prompt tokens.
+>
+> Stage 0's third item (15 steps for AgentDojo) is deferred to the adapter:
+> `ReActAgent(max_steps=…)` already exists, so it is one argument there.
+
 ## 5. What it costs to run
 
 Measured per-case calls from our own frozen ablation on `qwen2.5:3b`:

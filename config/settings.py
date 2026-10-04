@@ -454,6 +454,47 @@ OLLAMA_RATE_LIMIT_PER_MINUTE = int(
 # default would time out long before the model was finished.
 OLLAMA_REQUEST_TIMEOUT_S = int(_setting("OLLAMA_REQUEST_TIMEOUT_S", "300") or 300)
 
+# SILENT PROMPT TRUNCATION. MEASURED 2026-10-04 on Ollama 0.34.4, qwen2.5:3b,
+# GTX 1650 Ti 4 GB, with a secret word at the start of a long prompt:
+#
+#   prompt sent     prompt_tokens reported   recalled the word
+#   ~2.6k tokens    2578                     yes
+#   ~5.1k tokens    2050  ("truncating input prompt" limit=2050 in the log)   no
+#   ~10.1k tokens   2050                     no
+#
+# The server's default window is 4096 (`OLLAMA_CONTEXT_LENGTH:0` = auto), and
+# a prompt over it is cut to exactly 2050 tokens by dropping its START - the
+# system prompt and tool catalogue - with no error to the client. Prompts up to
+# 3414 tokens passed intact even with max_tokens=1600 reserved.
+#
+# `num_ctx` CANNOT be set per request through the /v1 shim: both
+# `options.num_ctx` and a top-level `num_ctx` were sent with a 10k prompt and
+# both came back at 2050. It has to be set on the server:
+#
+#     OLLAMA_MODELS=D:\ollama OLLAMA_CONTEXT_LENGTH=24576 ollama serve
+#
+# 24576 was measured to hold an 18,254-token prompt intact, which covers
+# AgentDojo's largest workspace task (~15k tokens of observations plus a ~2.2k
+# catalogue - docs/AGENTDOJO_SPIKE.md 4.8). Cost: the model no longer fits on
+# the 4 GB card (34/37 layers on GPU), and a short call went 6.8s -> 7.2s.
+#
+# Every number already in results/ is unaffected: all 423 cached qwen2.5:3b
+# responses report prompt_tokens <= 2782, and none is the 2050 fingerprint.
+OLLAMA_CONTEXT_LENGTH = int(_setting("OLLAMA_CONTEXT_LENGTH", "24576") or 24576)
+
+# The client cannot ask Ollama how long a prompt was before truncation (0.34.4
+# has no tokenize endpoint), so it checks the reply instead and raises on
+# either signature:
+#   - prompt_tokens equal to a measured truncation size (2050 at the default
+#     4096 window: the realistic failure is a server started without the
+#     variable above);
+#   - more characters per reported token than intact text ever has. Measured
+#     ceiling 6.2, on deliberately repetitive English filler; ordinary prose,
+#     JSON and YAML sit near 3.5-4.5. Truncation keeps at most half the tokens,
+#     so it at least doubles the ratio.
+OLLAMA_TRUNCATED_PROMPT_TOKENS = frozenset({2050})
+OLLAMA_MAX_CHARS_PER_TOKEN = 7.5
+
 # Switching the backbone to the local arm. Deliberately NOT a change to
 # BACKBONE_MODEL: §9.1's comparison requires one pinned backbone, and every
 # number in results/ was measured against the Groq model. The local model is a
