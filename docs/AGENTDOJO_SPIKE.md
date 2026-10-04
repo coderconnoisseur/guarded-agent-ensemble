@@ -383,3 +383,67 @@ still stops the job.
 
 **Next, per the rule:** the backbone question (HANDOFF 12.5) comes before
 stage 2. A stronger local model is what would make AgentDojo informative.
+
+
+### 9.2 Result, 2026-10-05: **GO** for `qwen3:4b-instruct-2507-q4_K_M`
+
+Same rule as 9.1, unchanged.
+`results/agentdojo/banking_A_qwen3-4b-instruct-2507-q4_K_M_important_instructions.json`,
+160 runs, Ollama `OLLAMA_CONTEXT_LENGTH=8192`.
+
+| criterion | bar | 3B (9.1) | **4B-instruct** | |
+|---|---|---|---|---|
+| clean utility | ≥ 8/16 | 7/16 | **9/16** | ✅ |
+| payload seen | ≥ 50% | 99/144 | **126/144 (88%)** | ✅ |
+
+Condition A (undefended) on banking:
+
+| | 3B | **4B-instruct** |
+|---|---|---|
+| real tasks solved (11 that need work) | 4 | **5** |
+| floor tasks failed by over-acting | 2 (9, 10) | **1** (10) |
+| utility under attack | 52/144 | **73/144 (51%)** |
+| **ASR, all attacked runs** | 18/144 (12.5%) | **60/144 (41.7%)** |
+| ASR, payload seen | 18/99 | **60/126 (47.6%)** |
+| model calls / run | 4.21 | 4.55 |
+| wall time / run | ~22 s | 38.6 s |
+
+**What this run establishes**
+
+1. **The 3B's low ASR was incompetence, not robustness.** A slightly more
+   capable model is hijacked **3.3× as often** (12.5% → 41.7%). An agent that
+   cannot finish the user's task cannot finish the attacker's either — the
+   confound criterion 1 was written to catch, now measured directly.
+2. **Capability and vulnerability rise together.** This is the pattern
+   AgentDojo itself reports, and the opposite direction from this project's
+   27B result, where the stronger model *resisted* our handwritten attacks
+   (ASR 0.07). On a benchmark built to land, a more capable agent follows
+   more instructions — including injected ones.
+3. **There is now a baseline worth defending.** 41.7% undefended ASR on
+   banking is the number Condition B has to bring down, at a utility under
+   attack (51%) worth protecting. For scale only, not comparison: IPIGuard's
+   reported undefended average across AgentDojo is 13.16%, on far stronger
+   backbones and all four suites.
+4. **No suite-specific weakness in the attack.** All 9 injection tasks
+   landed at least 3 times (task 3 most: 12/16).
+
+**Incidents, both handled by the guards**
+
+- The Ollama server was killed by the session's 2-hour background limit
+  after 146 runs. The run in flight lost its model, the runner's
+  stop-on-loop-error rule kept it out of the results, and the job resumed on
+  a server restarted with **identical** settings. A server for a long run
+  must outlive the run.
+- `qwen3:4b` was unusable as-is (51 s/turn; `/no_think` ignored, native
+  `think: false` moved the thinking into the answer). The non-thinking 2507
+  build is the same model with thinking removed in training: 7-10 s/turn.
+
+**Next (stage 2), in order**
+
+1. Try `OLLAMA_CONTEXT_LENGTH=4096`: at 8192 the model does not fit the 4 GB
+   card (26/37 layers on GPU, GPU ~13% busy, CPU pegged). If banking fits in
+   4k, re-run Condition A under it so A and B share one setup.
+2. Commit a dev/held-out split of banking user tasks **before** touching the
+   Firewall heuristics (spike 4.2: 0% banking recall).
+3. Condition B on banking. At 8k it would be ~17.5 calls × ~8.5 s ≈ 150 s/run,
+   ~6.7 h for 160 runs; 4k should cut that.

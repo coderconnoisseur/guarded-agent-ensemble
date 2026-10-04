@@ -1426,7 +1426,13 @@ results look better before it was caught.
 > layering survives the move; the risk is that the Firewall heuristics do not
 > generalise (0% recall on banking, 33% false positives on clean workspace
 > outputs, measured offline at zero model calls). Recommendation: staged, behind
-> a go/no-go gate. Awaiting the user's decision; the adapter is not started.
+> a go/no-go gate.
+>
+> **Stage 1 done 2026-10-05 (spike doc §9).** Bridge + runner built
+> (`src/agentdojo_bridge.py`, `demos/agentdojo_run.py`). `qwen2.5:3b` NO-GO
+> (7/16). `qwen3:4b-instruct-2507-q4_K_M` **GO**: utility 9/16, undefended
+> ASR **60/144 = 41.7%** on banking. Next: 4k-window test, dev/held-out
+> split, then Condition B.
 
 The professor asked whether the work has been run on a research-level
 benchmark. The honest answer is **partially**:
