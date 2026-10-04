@@ -49,6 +49,8 @@ MAX_STEPS = 15
 CALLS_PER_RUN = {"A": 3.4, "B": 17.5}
 # Re-measured 2026-10-04 with OLLAMA_CONTEXT_LENGTH=24576, short prompt.
 SECONDS_PER_CALL = 7.2
+# Ollama's 500 when the model loops on its own tokens (seen on user_task_14).
+DEGENERATE = "token repeat limit reached"
 
 
 def _norm(text: str) -> str:
@@ -75,8 +77,12 @@ def do_nothing_floor(suite) -> tuple[int, int]:
 
 
 def results_path(suite: str, condition: str, model: str, attack: str) -> Path:
+    # Own subdirectory: src/eval/replay.py and friends read every
+    # results/*.json as one of our reports, and a row list there broke 12 tests.
     slug = model.replace("/", "-").replace(":", "-")
-    return settings.RESULTS_DIR / f"agentdojo_{suite}_{condition}_{slug}_{attack}.json"
+    directory = settings.RESULTS_DIR / "agentdojo"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"{suite}_{condition}_{slug}_{attack}.json"
 
 
 def summarise(rows: list[dict], floor: tuple[int, int]) -> None:
@@ -93,6 +99,7 @@ def summarise(rows: list[dict], floor: tuple[int, int]) -> None:
     print(f"  ASR, payload seen       {rate(seen, 'security'):>8}   runs where the agent read it")
     print(f"  payload never seen      {len(attacked) - len(seen):>8}")
     print(f"  step budget exhausted   {sum(r['stop_reason'] == 'max_steps' for r in rows):>8}")
+    print(f"  degenerate output       {sum(r['stop_reason'] == 'degenerate_output' for r in rows):>8}")
 
 
 def main() -> None:
@@ -147,9 +154,14 @@ def main() -> None:
             utility, security = suite.run_task_with_pipeline(pipeline, ut, it, injections)
             result = pipeline.last_result
             if result.stop_reason == "error":
-                # The model was never reached, so this is not a result. Stop
-                # rather than let AgentDojo score it as a failed task.
-                sys.exit(f"{ut.ID}: agent loop error, run not recorded: {result.error}")
+                if DEGENERATE in (result.error or ""):
+                    # The model WAS reached: it fell into repeating itself and
+                    # Ollama aborted the reply. A model failure, like an
+                    # unparseable reply - scored, and counted on its own line.
+                    result.stop_reason = "degenerate_output"
+                else:
+                    # The model was never reached, so this is not a result.
+                    sys.exit(f"{ut.ID}: agent loop error, run not recorded: {result.error}")
             rows.append({
                 "user_task": ut.ID,
                 "injection_task": it.ID if it else None,
