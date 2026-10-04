@@ -395,6 +395,13 @@ OLLAMA_MODEL_CHAIN = [
     "qwen2.5:3b",
     "qwen3:4b",
     "llama3.2:3b",
+    # ADDED 2026-10-05 for AgentDojo, after qwen2.5:3b was a NO-GO there
+    # (docs/AGENTDOJO_SPIKE.md 9.1). qwen3:4b cannot stop thinking: measured
+    # 51s/turn, and `/no_think` (ignored) and native `think: false` (moved the
+    # thinking into `content`) both failed. This is the same model with
+    # thinking removed in training, and the same family as BACKBONE_MODEL.
+    # Last in the chain so LOCAL_BACKBONE_MODEL is unchanged.
+    "qwen3:4b-instruct-2507-q4_K_M",
 ]
 
 # The reply budget floor for a local reasoning model.
