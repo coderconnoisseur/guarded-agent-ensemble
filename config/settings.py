@@ -216,12 +216,14 @@ GROQ_RATE_LIMIT_PER_MINUTE = 2
 #   llama-prompt-guard-2-86m : RPM 30, TPM 15000, 14400/day. Inputs are capped
 #       at FIREWALL_GUARD_MAX_CHARS (~300 tokens), so 25/min stays under both
 #       with headroom, as OpenRouter's 15 sits under its 20.
-#   gpt-oss-safeguard-20b    : TPM 8000, 1000/day. A call reserves
+#   gpt-oss-safeguard-20b    : TPM 2000, 1000/day. RE-MEASURED 2026-10-05:
+#       the headers reported 8000 TPM on 10-03 and 2000 two days later, so
+#       this limit moves without notice. A call reserves
 #       HARM_GATE_CLASSIFIER_MAX_TOKENS=512 plus a prompt of up to ~600, so
-#       ~1100 tokens each; 6/min is 6600 of the 8000.
+#       ~1100 tokens each; 1/min is the most that fits under 2000.
 GROQ_MODEL_RATE_LIMITS: dict[str, int] = {
     "meta-llama/llama-prompt-guard-2-86m": 25,
-    "openai/gpt-oss-safeguard-20b": 6,
+    "openai/gpt-oss-safeguard-20b": 1,
 }
 
 # Purpose-built safety models on the same key, for later phases rather than
