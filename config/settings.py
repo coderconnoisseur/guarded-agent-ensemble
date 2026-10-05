@@ -601,6 +601,16 @@ def api_key_for(provider: str) -> str:
 # Agent loop (CLAUDE.md §5.3)
 # ---------------------------------------------------------------------------
 
+# Which revision of the defenses runs. 0 = exactly as published: every number
+# in results/ was produced at 0, and changing a prompt or a tool reply changes
+# the cache keys, so 0 stays the default to keep those replays free and exact.
+#   1 = AgentDojo dev fixes (docs/AGENTDOJO_SPIKE.md 10.2), developed on the
+#       banking DEV split only: plan enforcement passes an unknown tool name
+#       through to the registry; the misalignment judge's inference unit may
+#       not assert whether the user asked for the action, and a fact read from
+#       a source the instruction names no longer counts as "never stated".
+DEFENSE_REVISION = int(_setting("DEFENSE_REVISION", "0") or 0)
+
 # Hard ceiling on ReAct iterations, so a confused model cannot drain the budget.
 AGENT_MAX_STEPS = 6
 

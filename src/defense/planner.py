@@ -459,6 +459,14 @@ class PlanEnforcingRegistry:
     def dispatch(self, name: str, args: dict[str, Any]) -> ToolResult:
         graph = self.enforcement.graph
 
+        if settings.DEFENSE_REVISION >= 1 and not self._inner.has(name):
+            # Nothing can run under a name the registry does not have, so this
+            # costs no security - and the registry's "No such tool" is what
+            # lets the model fix a typo. Measured on AgentDojo banking task 2:
+            # answering `get_iban()` with "not in the agreed plan" hid the
+            # typo, and the model gave up on the task.
+            return self._inner.dispatch(name, args)
+
         node = graph.next_unexecuted(name)
         if node is not None:
             # Argument Estimation: the plan committed to the tool, not to

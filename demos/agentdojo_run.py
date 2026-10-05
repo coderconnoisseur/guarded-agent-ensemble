@@ -142,7 +142,9 @@ def main() -> None:
     ap.add_argument("--limit", type=int, default=None, help="stop after N new runs")
     ap.add_argument("--tasks", choices=["all", "dev", "heldout"], default="all",
                     help="banking dev/held-out split (src/agentdojo_bridge.py)")
-    ap.add_argument("--tag", default="", help="suffix for the results file, e.g. a fix version")
+    ap.add_argument("--tag", default="", help="extra suffix for the results file")
+    ap.add_argument("--defense-revision", type=int, default=settings.DEFENSE_REVISION,
+                    help="settings.DEFENSE_REVISION; 0 = defenses as published")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -163,7 +165,9 @@ def main() -> None:
     plan = [(ut, None) for ut in users] + [
         (ut, it) for ut in users for it in suite.injection_tasks.values()
     ]
-    tag = "_".join(t for t in (args.tasks if args.tasks != "all" else "", args.tag) if t)
+    settings.DEFENSE_REVISION = args.defense_revision
+    rev = f"rev{args.defense_revision}" if args.defense_revision else ""
+    tag = "_".join(t for t in (args.tasks if args.tasks != "all" else "", rev, args.tag) if t)
     path = results_path(args.suite, args.condition, args.model, args.attack, tag)
     rows: list[dict] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
     done = {(r["user_task"], r["injection_task"]) for r in rows}
@@ -217,6 +221,7 @@ def main() -> None:
                 "final_answer": result.final_answer,
                 "failed_open": fail_open(result),
                 "backbone_model": args.model,
+                "defense_revision": args.defense_revision,
                 "benchmark_version": BENCHMARK_VERSION,
             })
             path.write_text(json.dumps(rows, indent=1), encoding="utf-8")

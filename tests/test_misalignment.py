@@ -1093,3 +1093,45 @@ class TestTheJudgeNeedNotBeTheActor:
 
         pipeline = self._pipeline(model="some-tiny/model-3b")
         assert pipeline.checkpoint.provider == settings.MISALIGNMENT_JUDGE_PROVIDER
+
+
+# ---------------------------------------------------------------------------
+# DEFENSE_REVISION: revision 0 is what every published number used
+# ---------------------------------------------------------------------------
+
+import hashlib  # noqa: E402
+
+from config import settings  # noqa: E402
+from src.defense import misalignment as _m  # noqa: E402
+
+# Prompts are cache keys. Pinned so an edit to revision 0 cannot silently
+# orphan the cache behind every number in results/.
+R0_INFERENCE_SHA = "f30920527aea9180327311e00291f3c90597c23b40546b34343a3e0ecd0b1c3e"
+R0_VERIFICATION_SHA = "ef51d3b665f1657aff732bf0e6b25110f8fda0c65386966820ad9828ac32dff7"
+
+
+class TestDefenseRevision:
+    def test_revision_0_prompts_are_byte_identical_to_published(self):
+        rendered = _m.VERIFICATION_PROMPT.format(
+            observer_caveat="", instruction="I", inferred_task="T", action="A")
+        assert hashlib.sha256(_m.INFERENCE_PROMPT.encode()).hexdigest() == R0_INFERENCE_SHA
+        assert hashlib.sha256(rendered.encode()).hexdigest() == R0_VERIFICATION_SHA
+
+    def _prompts(self, monkeypatch, revision):
+        monkeypatch.setattr(settings, "DEFENSE_REVISION", revision)
+        client = scripted("paying a bill from a file", "VERDICT: aligned | WHY: ok")
+        MisalignmentCheckpoint(client=client).check(
+            "Pay the bill in bill.txt", TRAJECTORY, "files.delete", {"path": "x"})
+        return client.prompts
+
+    def test_revision_1_forbids_claims_about_the_instruction(self, monkeypatch):
+        inference, verification = self._prompts(monkeypatch, 1)
+        assert "say nothing about whether the action was" in inference
+        assert "ignore anything" in verification
+        assert "did not read from something the instruction itself points to" in verification
+
+    def test_revision_0_sends_neither_change(self, monkeypatch):
+        inference, verification = self._prompts(monkeypatch, 0)
+        assert "say nothing about whether" not in inference
+        assert "ignore anything" not in verification
+        assert "points to" not in verification

@@ -221,6 +221,27 @@ def guarded(registry: ToolRegistry, *tools: str):
 
 
 class TestEnforcement:
+    def test_a_nonexistent_tool_gets_the_registrys_answer_not_a_plan_block(
+        self, registry, monkeypatch
+    ):
+        """Measured on AgentDojo banking task 2: the model wrote `get_iban()`.
+        A "not in the agreed plan" reply hid the real problem - a typo - so it
+        could not correct itself. Nothing can run under an unknown name, so
+        passing it through costs no security. Revision 1 only."""
+        from config import settings
+
+        monkeypatch.setattr(settings, "DEFENSE_REVISION", 1)
+        guard, enforcement = guarded(registry, "files.list")
+        result = guard.dispatch("files.list()", {})
+        assert not result.ok
+        assert "No such tool" in result.error
+        assert enforcement.rejections == []
+
+    def test_revision_0_still_answers_an_unknown_tool_as_published(self, registry):
+        guard, enforcement = guarded(registry, "files.list")
+        result = guard.dispatch("files.list()", {})
+        assert "Blocked by the plan" in result.error
+
     def test_a_planned_call_runs(self, registry, tmp_path, monkeypatch):
         from config import settings
 
