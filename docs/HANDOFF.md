@@ -1433,6 +1433,11 @@ results look better before it was caught.
 > (7/16). `qwen3:4b-instruct-2507-q4_K_M` **GO**: utility 9/16, undefended
 > ASR **60/144 = 41.7%** on banking. Next: 4k-window test, dev/held-out
 > split, then Condition B.
+>
+> **Condition B done 2026-10-05 (spike doc §10), as built:** ASR 41.7% →
+> **0.7%** (p = 3.5e-18), but real-task utility 5/11 → **1/11**. Planner and
+> Misalignment Checkpoint buy both the security and the utility loss. Next:
+> dev/held-out split, fix two defects on dev, report on held-out.
 
 The professor asked whether the work has been run on a research-level
 benchmark. The honest answer is **partially**:
