@@ -13,7 +13,7 @@ from agentdojo.functions_runtime import FunctionsRuntime  # noqa: E402
 from agentdojo.task_suite.load_suites import get_suites  # noqa: E402
 
 from src.agent.loop import AgentResult  # noqa: E402
-from src.agentdojo_bridge import TAGS, GuardedPipeline  # noqa: E402
+from src.agentdojo_bridge import BANKING_DEV, BANKING_HELDOUT, TAGS, GuardedPipeline  # noqa: E402
 
 SUITES = get_suites("v1.2.2")
 BANKING = SUITES["banking"]
@@ -92,3 +92,9 @@ def test_the_attack_accepts_the_pipeline_name():
     task = BANKING.user_tasks["user_task_0"]
     injections = attack.attack(task, BANKING.injection_tasks["injection_task_0"])
     assert any("Local model" in p for p in injections.values())
+
+
+def test_banking_split_partitions_the_suite_and_keeps_inspected_tasks_in_dev():
+    assert set(BANKING_DEV) | set(BANKING_HELDOUT) == set(BANKING.user_tasks)
+    assert not set(BANKING_DEV) & set(BANKING_HELDOUT)
+    assert {"user_task_0", "user_task_1", "user_task_2"} <= set(BANKING_DEV)

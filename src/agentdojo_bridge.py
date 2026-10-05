@@ -116,6 +116,17 @@ TAGS: dict[str, tuple[bool, bool, bool]] = {
 }
 
 
+# Dev / held-out split of banking user tasks, committed 2026-10-05 BEFORE any
+# defense was changed for AgentDojo (docs/AGENTDOJO_SPIKE.md 10.3). Tasks 0-2
+# were inspected in the Condition B smoke test, so they are forced into dev;
+# the other five dev tasks are random.Random(20261005).sample of tasks 3-15.
+# Fixes are developed on DEV; results are reported on HELDOUT only.
+BANKING_DEV = ("user_task_0", "user_task_1", "user_task_2", "user_task_5",
+               "user_task_7", "user_task_9", "user_task_11", "user_task_15")
+BANKING_HELDOUT = ("user_task_3", "user_task_4", "user_task_6", "user_task_8",
+                   "user_task_10", "user_task_12", "user_task_13", "user_task_14")
+
+
 def _param_type(schema: dict[str, Any]) -> str:
     if "type" in schema:
         return str(schema["type"])

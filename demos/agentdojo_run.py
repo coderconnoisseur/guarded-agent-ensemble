@@ -35,7 +35,7 @@ from agentdojo.task_suite.load_suites import get_suites  # noqa: E402
 
 from config import settings  # noqa: E402
 from src.agent.loop import AgentResult  # noqa: E402
-from src.agentdojo_bridge import GuardedPipeline  # noqa: E402
+from src.agentdojo_bridge import BANKING_DEV, BANKING_HELDOUT, GuardedPipeline  # noqa: E402
 from src.llm.client import LLMClient  # noqa: E402
 from src.pipeline.condition_a import ConditionA  # noqa: E402
 from src.pipeline.condition_b import ConditionB  # noqa: E402
@@ -76,13 +76,14 @@ def do_nothing_floor(suite) -> tuple[int, int]:
     return solved, len(suite.user_tasks)
 
 
-def results_path(suite: str, condition: str, model: str, attack: str) -> Path:
+def results_path(suite: str, condition: str, model: str, attack: str, tag: str = "") -> Path:
     # Own subdirectory: src/eval/replay.py and friends read every
     # results/*.json as one of our reports, and a row list there broke 12 tests.
     slug = model.replace("/", "-").replace(":", "-")
     directory = settings.RESULTS_DIR / "agentdojo"
     directory.mkdir(parents=True, exist_ok=True)
-    return directory / f"{suite}_{condition}_{slug}_{attack}.json"
+    suffix = f"_{tag}" if tag else ""
+    return directory / f"{suite}_{condition}_{slug}_{attack}{suffix}.json"
 
 
 def fail_open(result) -> dict[str, bool]:
@@ -139,6 +140,9 @@ def main() -> None:
     ap.add_argument("--model", default=settings.LOCAL_BACKBONE_MODEL)
     ap.add_argument("--attack", default="important_instructions")
     ap.add_argument("--limit", type=int, default=None, help="stop after N new runs")
+    ap.add_argument("--tasks", choices=["all", "dev", "heldout"], default="all",
+                    help="banking dev/held-out split (src/agentdojo_bridge.py)")
+    ap.add_argument("--tag", default="", help="suffix for the results file, e.g. a fix version")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -150,10 +154,17 @@ def main() -> None:
                  f"USE_LOCAL_BACKBONE=1 (and start Ollama per HANDOFF 4a).")
 
     suite = get_suites(BENCHMARK_VERSION)[args.suite]
-    plan = [(ut, None) for ut in suite.user_tasks.values()] + [
-        (ut, it) for ut in suite.user_tasks.values() for it in suite.injection_tasks.values()
+    users = list(suite.user_tasks.values())
+    if args.tasks != "all":
+        if args.suite != "banking":
+            sys.exit("--tasks dev/heldout is only defined for banking")
+        keep = BANKING_DEV if args.tasks == "dev" else BANKING_HELDOUT
+        users = [u for u in users if u.ID in keep]
+    plan = [(ut, None) for ut in users] + [
+        (ut, it) for ut in users for it in suite.injection_tasks.values()
     ]
-    path = results_path(args.suite, args.condition, args.model, args.attack)
+    tag = "_".join(t for t in (args.tasks if args.tasks != "all" else "", args.tag) if t)
+    path = results_path(args.suite, args.condition, args.model, args.attack, tag)
     rows: list[dict] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
     done = {(r["user_task"], r["injection_task"]) for r in rows}
     todo = [(ut, it) for ut, it in plan if (ut.ID, it.ID if it else None) not in done]
@@ -162,7 +173,7 @@ def main() -> None:
     calls = len(todo) * CALLS_PER_RUN[args.condition]
     print(f"AgentDojo {BENCHMARK_VERSION} / {args.suite} / Condition {args.condition} / "
           f"{args.model} / {args.attack}")
-    print(f"  {len(plan)} runs ({len(suite.user_tasks)} clean + {len(plan) - len(suite.user_tasks)} "
+    print(f"  {len(plan)} runs ({len(users)} clean + {len(plan) - len(users)} "
           f"attacked), {len(done)} done, {len(todo)} to go")
     print(f"  estimate: >= {calls:.0f} model calls, >= {calls * SECONDS_PER_CALL / 3600:.1f} h "
           f"at {SECONDS_PER_CALL}s/call (local)")
