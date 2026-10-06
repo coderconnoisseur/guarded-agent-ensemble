@@ -130,7 +130,11 @@ def summarise(rows: list[dict], floor: tuple[int, int]) -> None:
         if bad:
             flag = "  OVER THRESHOLD - not a measurement of this module" if (
                 bad / len(rows) >= MAX_DEGRADED_SHARE) else ""
-            print(f"  {module} failed open   {bad:>8}/{len(rows)}{flag}")
+            # A degraded Planner falls back to READ-ONLY: fail-closed, not
+            # open. Still not a measurement of the Planner (measured: banking
+            # user_task_9, all 10 runs, plan rejected over a pruned node).
+            how = "degraded (read-only, fail-closed)" if module == "planner" else "failed open"
+            print(f"  {module} {how}   {bad:>8}/{len(rows)}{flag}")
 
 
 def main() -> None:

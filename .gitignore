@@ -37,3 +37,7 @@ external/
 # cache) that regenerate from the source in one command, so they are build
 # output rather than source - same reasoning as results/ and src/llm/cache/.
 graphify-out/
+
+# professor-machine run artefacts (scripts/prof_run.py)
+prof_probe_*.json
+prof_results_*.zip

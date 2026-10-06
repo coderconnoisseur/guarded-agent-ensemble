@@ -404,6 +404,11 @@ OLLAMA_MODEL_CHAIN = [
     # thinking removed in training, and the same family as BACKBONE_MODEL.
     # Last in the chain so LOCAL_BACKBONE_MODEL is unchanged.
     "qwen3:4b-instruct-2507-q4_K_M",
+    # ADDED 2026-10-06 for the professor's-machine run (scripts/prof_run.py):
+    # same recipe as qwen2.5:3b at larger scale, so only size varies along
+    # the capability curve. Never measured on this 4 GB laptop.
+    "qwen2.5:7b",
+    "qwen2.5:14b",
 ]
 
 # The reply budget floor for a local reasoning model.
