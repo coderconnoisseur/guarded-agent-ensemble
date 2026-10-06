@@ -1438,6 +1438,10 @@ results look better before it was caught.
 > **0.7%** (p = 3.5e-18), but real-task utility 5/11 → **1/11**. Planner and
 > Misalignment Checkpoint buy both the security and the utility loss. Next:
 > dev/held-out split, fix two defects on dev, report on held-out.
+>
+> **Revision 1, held-out (spike doc §11), 2026-10-06:** ASR 39/72 → **0/72**
+> (p = 3.6e-12) with utility under attack **32/72 vs 34/72 undefended
+> (p = 0.82)**. 8 tasks, one suite, one 4B — state the n with it.
 
 The professor asked whether the work has been run on a research-level
 benchmark. The honest answer is **partially**:

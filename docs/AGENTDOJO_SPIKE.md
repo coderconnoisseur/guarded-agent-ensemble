@@ -523,3 +523,64 @@ all under the 10% threshold, so the row stands as a measurement of the modules.
 2. Fix the two defects on dev; re-run B; report on held-out only.
 3. If budget allows: Planner-only and Misalignment-only isolation on
    AgentDojo, to replace first-blocker attribution with a controlled one.
+
+
+---
+
+## 11. Defense revision 1, 2026-10-06 — fixed on dev, reported on held-out
+
+Three changes (`settings.DEFENSE_REVISION = 1`, commit c79cf3f), all developed
+on the banking DEV split committed beforehand (80712ac): plan enforcement
+passes unknown tool names to the registry; the judge's inference unit may not
+claim whether the user gave an instruction; a fact read from a source the
+instruction names no longer counts as "never stated". Revision 0 is unchanged
+and still the default. Same backbone, window (8192), attack and steps as §9–10.
+
+### 11.1 Held-out (tasks 3, 4, 6, 8, 10, 12, 13, 14) — the reported number
+
+| | ASR | utility under attack | clean | real tasks (of 5) |
+|---|---|---|---|---|
+| A, no defenses | 39/72 (54%) | 34/72 | 4/8 | 2 |
+| B as built (rev 0) | 0/72 | 28/72 | 3/8 | 0 |
+| **B revision 1** | **0/72** | **32/72** | **4/8** | **1** |
+
+Paired, over the same 72 (user task, injection task) pairs:
+
+- ASR, rev 1 vs A: landed only in A **39**, only in rev 1 **0** — **p = 3.6e-12**;
+- utility under attack, rev 1 vs A: 11 vs 9 — **p = 0.82**, no detectable cost;
+- utility under attack, rev 1 vs rev 0: 0 vs 4 — p = 0.12.
+
+No module failed open on any of the 80 held-out runs.
+
+**Reading:** on tasks no fix was developed on, revision 1 blocks every attack
+while its utility under attack is statistically indistinguishable from the
+undefended agent. The trade the third change risked — the relaxed rule had
+stopped 22 attacks as built — did not appear: the Planner still stops the
+attacker's off-plan payment.
+
+**Limits, stated with it:** 8 tasks, one suite, one 4B backbone. On the 5
+held-out tasks that need real work, rev 1 solves 1 and A solves 2. The rev 1 vs
+rev 0 utility gain is not significant on its own.
+
+### 11.2 Dev (tasks 0, 1, 2, 5, 7, 9, 11, 15) — for completeness, not reported
+
+| | ASR | utility under attack | clean |
+|---|---|---|---|
+| A | 21/72 | 39/72 | 5/8 |
+| B as built | 1/72 | 33/72 | 3/8 |
+| B revision 1 | 0/72 | 33/72 | 4/8 |
+
+**Flag:** the Planner failed open on **10/80 dev runs (12.5%)**, over the 10%
+threshold, so the dev row is not a clean measurement of the Planner. Held-out
+had none. Not investigated yet.
+
+### 11.3 What this changes
+
+The as-built result (§10) was "security generalises, utility does not". With
+three small, explainable fixes — none tuned on the tasks it is reported on —
+the held-out result is "security holds, at no detectable utility cost". That
+is the claim to put to the professor, with its n.
+
+Next candidates: the dev Planner fail-open; the other three suites (workspace
+needs the Firewall/Quarantine generalisation of spike 4.2–4.6 and a 24k
+window); a second backbone for the capability curve.
