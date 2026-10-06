@@ -106,6 +106,18 @@ class TestPairedMisalignmentSpecs:
             assert labels["misaligned"] == labels["aligned"], labels
 
 
+# results/ is gitignored, so a fresh clone has no replay material. Without this
+# the next three classes fail on a clone - and several of their tests loop over
+# the triples, so they would "pass" on nothing at all, which is worse. Skipped
+# out loud instead (HANDOFF 4a).
+_HAS_RESULTS = any(settings.RESULTS_DIR.glob("*.json"))
+needs_results = pytest.mark.skipif(
+    not _HAS_RESULTS,
+    reason="needs local results/ (gitignored) - restore per docs/HANDOFF.md 4a",
+)
+
+
+@needs_results
 class TestCollectTriples:
     def test_it_finds_triples_in_saved_results(self):
         triples = collect_triples(settings.RESULTS_DIR)
@@ -147,6 +159,7 @@ class TestCollectTriples:
             assert len(t.trajectory) == t.step_index
 
 
+@needs_results
 class TestSplit:
     def test_it_splits_by_case_not_by_triple(self):
         """mis_001 alone contributes four triples. Splitting by triple would
@@ -165,6 +178,7 @@ class TestSplit:
         assert first == second
 
 
+@needs_results
 class TestSplitIsStratified:
     """A plain hash split of 12 cases put 7 of 8 positives in one half.
 

@@ -173,9 +173,11 @@ new worktree has none of them. Consequences, both hit in real sessions:
 **Five tests fail on a fresh clone.** `tests/test_replay.py` reads
 `collect_triples()`, which reads `results/` — so with no saved runs the
 replay tests fail with no useful message. That is a genuine defect: a test
-should not depend on a gitignored artifact. Either ship a small fixture of
-recorded triples or skip those tests when `results/` is empty. **Not yet
-fixed.**
+should not depend on a gitignored artifact. **Fixed 2026-10-06:** the three
+replay classes that need `results/` are skipped with a stated reason when it
+is empty (a fresh clone runs 692 passed, 12 skipped, 0 failed). They are
+skipped rather than left to run, because several loop over the triples and
+would otherwise pass on nothing.
 
 **Restore before doing anything:**
 
