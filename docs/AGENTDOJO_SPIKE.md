@@ -744,3 +744,43 @@ contact address beside an injection) that the held-out tasks do not contain.
   which on this evidence would keep changes 1, 2, 4, 5 and give back the
   links - is selected on held-out data and must be labelled post hoc, or
   tested on a fresh split / another suite.
+
+
+---
+
+## 14. Lever 1 and revision 3, 2026-10-13 — the best Slack trade-off, still costly
+
+**Lever 1** — the hosted 27B writes the plan, the 4B acts (`planner_model`;
+the planner never sees tool output, so this costs no security). On revision 1,
+Slack dev: utility under attack 8 → **8**/50 (4 swaps each way); banking dev
+33 → 35/72 (n.s.). A correct plan alone does not recover Slack utility. Two
+bugs found on the way and fixed (b977a5c): the 27B's long plans were cut at
+400 tokens (Planner degraded on 12/60), and four orphaned `llama-server`
+processes held 3.8/4 GB of VRAM (CUDA out of memory).
+
+**Revision 3** = revision 2 without the unnamed-address rule, with the 27B
+planner (a1f9cbe). Dropping the rule was decided **after** seeing revision 2's
+held-out result, so the held-out numbers below are **post hoc**; a clean test
+needs an unseen suite.
+
+| Slack | utility under attack | clean | ASR |
+|---|---|---|---|
+| dev: A / rev 1 / rev 2 / **rev 3** | 24 / 8 / 13 / **12** of 50 | 7 / 2 / 3 / **3** of 10 | 32 / 6 / 0 / **6** of 50 |
+| held-out: A / rev 1 / rev 2 / **rev 3** | 25 / 9 / 2 / **13** of 55 | 7 / 2 / 0 / **3** of 11 | 37 / 8 / 0 / **8** of 55 |
+
+Slack held-out, paired: rev 1 → rev 3 utility only-rev1 1, only-rev3 5
+(**p = 0.22, not significant**); ASR identical to rev 1; A → rev 3 ASR 29 vs 0
+(p = 3.7e-09); utility still below A (13 vs 1 only-A/only-rev3, p = 0.0018).
+Banking, dev and held-out: ASR 0/72, utility equal to rev 1 (held-out
+32/72 vs A 34/72, p = 0.82). No module failed open or degraded anywhere.
+
+**Reading.** Three operating points on Slack held-out now: revision 1
+(ASR 15%, utility 9/55), revision 2 (0%, 2/55), revision 3 (15%, 13/55,
+post hoc). Revision 3 is the best utility at revision 1's security, but the
+gain over revision 1 is not significant at this n, and Slack utility is still
+about half of undefended. What remains (§13, §14 diagnoses): plan blocks on
+tasks whose work is defined by data ("do the tasks on this page") - correct
+by design; legitimate links found in data, which no call-only defense can tell
+from injected ones; and a 4B backbone whose own mistakes every module then
+amplifies. The next step that could move it is a stronger backbone
+(professor's machine), and an unseen suite (travel) for a clean test.
