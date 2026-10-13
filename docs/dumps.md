@@ -1,6 +1,6 @@
 # Session dump — read this first to continue
 
-**Last updated:** 2026-10-13 13:10 IST · kept current by the working session
+**Last updated:** 2026-10-13 14:35 IST · kept current by the working session
 at every milestone. If you are a new session: read this whole file, then
 `CLAUDE.md`, then `docs/AGENTDOJO_SPIKE.md` §9–11. Do not re-derive anything
 below; it was measured.
@@ -9,10 +9,26 @@ below; it was measured.
 
 ## 0. Right now
 
-**Nothing is running.** The Slack run finished at 12:45 on 13 Oct (A and B
-both 126/126), was analysed, written up as `docs/AGENTDOJO_SPIKE.md` §12,
-committed and pushed. Ollama is stopped. Waiting on the user for the next
-step (§3).
+**Revision 2 dev runs are in progress** (started 14:27, ETA ~17:15): Condition B
+`--defense-revision 2 --tasks dev` on Slack (60 runs) then banking (80 runs),
+launched via WMI from `scratchpadev2.ps1 -split dev` on private port 11435.
+Chain log `scratchpadev2.log`; per-suite logs `rev2_<suite>_dev.log` (UTF-16).
+
+**Your next job when it ends:** compare rev2 dev against rev1 dev (same tasks;
+rev1 Slack dev rows are the `user_task` in `SLACK_DEV` subset of
+`slack_B_..._rev1.json`; banking dev is `banking_B_..._dev_rev1.json`). If
+utility under attack improved without ASR rising, run held-out:
+`rev2.ps1 -split heldout` via WMI (~3 h), then compare rev2 held-out vs A and
+vs rev1 on the held-out halves of both suites, and write spike doc §13.
+
+Revision 2 (commit f7f4967, diagnosed on dev only, Slack split 873f70f):
+Firewall stops reading "e-mail" as a verb (Quarantine was deleting
+"My e-mail is dora@gmail.com" and keeping the injection - 11/23 lost Slack dev
+runs); Planner strips `tool()` and drops edges to pruned nodes; Node Expansion
+blocks read-only calls to addresses neither user nor plan named (all 14
+surviving Slack attacks). Not done on purpose: matching AgentDojo's attack
+wording (would tune to the test template); task 18-style "do the tasks on
+this page" stays blocked by design.
 
 ### Where things live
 
