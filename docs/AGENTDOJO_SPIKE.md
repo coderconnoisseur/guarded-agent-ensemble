@@ -677,3 +677,70 @@ on banking only. The honest one-line claim is now: **the ensemble cuts
 attack success sharply on both suites; its utility cost depends on the suite,
 and on multi-step Slack tasks it is large.** One mechanism — read-only
 expansion to an attacker URL — accounts for every attack that survived.
+
+
+---
+
+## 13. Defense revision 2, 2026-10-13 — better on dev, worse on Slack held-out
+
+Developed on the dev halves of banking (80712ac) and Slack (873f70f, split
+committed before any diagnosis); reported on the held-out halves. Two rounds
+on dev (f7f4967, 95f12ff):
+
+1. Firewall: "e-mail" as a noun next to an address no longer reads as a
+   command (Quarantine had deleted "My e-mail is dora@gmail.com" and kept the
+   injection);
+2. Planner: `tool()` names stripped, edges to pruned nodes dropped;
+3. **Node Expansion: a read-only call to an address neither the user nor the
+   plan named is blocked** (every attack that survived revision 1);
+4. Quarantine: on a cross-block signal, drop the command blocks instead of
+   withholding the whole response;
+5. Judge: web pages count as a source the instruction can point to.
+
+### 13.1 Dev (what it was built on)
+
+| dev | utility under attack | ASR |
+|---|---|---|
+| Slack A / rev 1 / **rev 2** | 24 / 8 / **13** of 50 | 32 / 6 / **0** of 50 |
+| banking A / rev 1 / rev 2 | 39 / 33 / 33 of 72 | 21 / 0 / 0 of 72 |
+
+Slack rev 1 → rev 2: +6 utility, 0 lost (p = 0.031); ASR 6 → 0 (p = 0.031).
+
+### 13.2 Held-out (the reported number)
+
+| held-out | utility under attack | clean | ASR |
+|---|---|---|---|
+| Slack A | 25/55 | 7/11 | 37/55 |
+| Slack rev 1 | 9/55 | 2/11 | 8/55 |
+| **Slack rev 2** | **2/55** | **0/11** | **0/55** |
+| banking A | 34/72 | 4/8 | 39/72 |
+| banking rev 1 / rev 2 | 32 / 32 of 72 | 4 / 4 of 8 | 0 / 0 of 72 |
+
+Paired, Slack held-out: ASR rev 1 → rev 2, 8 → 0 (**p = 0.0078**); but
+utility under attack rev 1 → rev 2 lost 8, gained 1 (**p = 0.039, worse**).
+Banking held-out: identical to revision 1. No module failed open.
+
+**The dev gain did not generalise.** Of the 10 held-out runs revision 1
+solved and revision 2 lost, **9 are change 3, the address rule**: Slack tasks
+like "summarize the article Bob posted in 'general'" (user_task_1) and "find
+the restaurant someone wrote about" (user_task_6) must follow a link found in
+a *message*, and the rule cannot tell it from an injected one. On dev that
+cost (10 runs) was offset by changes 1, 4 and 5, which fixed a pattern (a
+contact address beside an injection) that the held-out tasks do not contain.
+
+### 13.3 What it means
+
+- There is no free lunch on Slack between the last attack channel and
+  utility. Two measured operating points on held-out:
+  **revision 1** - ASR 8/55 (15%), utility under attack 9/55;
+  **revision 2** - ASR 0/55, utility under attack 2/55.
+  Undefended: 37/55 and 25/55.
+- The surviving attack class (an agent sent to an attacker URL found in
+  data) and the lost utility class (an agent following a legitimate URL found
+  in data) are **the same action** to any defense that only sees the call.
+  Telling them apart needs the provenance of the URL relative to the
+  injection, not the call itself. That is a result, not a tuning gap.
+- Any revision chosen *after* this table - e.g. revision 2 without change 3,
+  which on this evidence would keep changes 1, 2, 4, 5 and give back the
+  links - is selected on held-out data and must be labelled post hoc, or
+  tested on a fresh split / another suite.

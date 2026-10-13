@@ -1,6 +1,6 @@
 # Session dump — read this first to continue
 
-**Last updated:** 2026-10-13 19:00 IST · kept current by the working session
+**Last updated:** 2026-10-13 19:45 IST · kept current by the working session
 at every milestone. If you are a new session: read this whole file, then
 `CLAUDE.md`, then `docs/AGENTDOJO_SPIKE.md` §9–11. Do not re-derive anything
 below; it was measured.
@@ -9,34 +9,15 @@ below; it was measured.
 
 ## 0. Right now
 
-**Revision 2 HELD-OUT run in progress** (started 18:58, ETA ~21:30): Condition B
-`--defense-revision 2 --tasks heldout` on Slack (66 runs) then banking (80),
-via WMI from `scratchpadev2.ps1 -split heldout`, private port 11435. Log
-`scratchpadev2.log`. If it died, relaunch the same command; it resumes.
+**Nothing is running.** Revision 2 dev and held-out both finished (19:36,
+13 Oct); written up as `docs/AGENTDOJO_SPIKE.md` §13. Waiting on the user's
+choice (§3 item 0).
 
-**Your next job when it ends:** compare rev2 held-out against A and rev1 on
-the held-out halves (Slack: `SLACK_HELDOUT` subset of `slack_A_...json` and
-`slack_B_..._rev1.json`; banking: `banking_B_..._heldout_rev1.json`), paired
-McNemar as in §4. Write spike doc §13 (dev story + held-out numbers), update
-§1 here, commit, push.
-
-**Revision 2 dev result (final code, commit 95f12ff):**
-
-| dev | utility under attack | ASR |
-|---|---|---|
-| Slack A / rev1 / rev2 | 24 / 8 / **13** of 50 | 32 / 6 / **0** of 50 |
-| banking A / rev1 / rev2 | 39 / 33 / 33 of 72 | 21 / 0 / 0 of 72 |
-
-rev1->rev2 on Slack dev: +6 utility, 0 lost (p = 0.031); ASR 6 -> 0
-(p = 0.031). No module failed open. Remaining 18 lost Slack dev runs: 10 are
-the deliberate trade (the address rule blocks legit URLs found in data, tasks
-11 and 15), 4 by design (task 18, "do the tasks on this page"), 3 correct
-judge/planner catches, 1 judge false positive (task 7).
-
-Revision 2 = rev 1 + (f7f4967) Firewall "e-mail" noun fix, Planner `tool()`
-strip + pruned-edge drop, Node Expansion blocks unnamed addresses; +
-(95f12ff) Quarantine drops command blocks instead of withholding everything
-when the signal is cross-block, judge accepts web pages as a source.
+**Headline of §13:** revision 2 closed the last Slack attack channel (held-out
+ASR 8/55 -> 0/55, p = 0.0078) but **cost utility on Slack held-out**
+(9/55 -> 2/55, p = 0.039); 9 of 10 lost runs = the new address rule blocking
+legitimate links found inside messages. Banking held-out unchanged (0/72 ASR,
+utility = undefended). Dev had shown +6 utility; it did not generalise.
 
 ### Where things live
 
@@ -141,6 +122,11 @@ suite-dependent - none on banking held-out, large on multi-step Slack.
 ---
 
 ## 3. Next steps, in order
+
+0. **User decides the Slack operating point** (spike §13.3): keep revision 1
+   (ASR 15%, more utility) or revision 2 (ASR 0%, little utility), or test a
+   post-hoc 'rev 2 without the address rule' - must be labelled post hoc or
+   validated on a fresh suite.
 
 1. ~~Slack~~ done (§1, spike doc §12).
 2. **Professor's machine** — waiting on the user: they run
