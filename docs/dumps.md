@@ -1,6 +1,6 @@
 # Session dump — read this first to continue
 
-**Last updated:** 2026-10-13 14:35 IST · kept current by the working session
+**Last updated:** 2026-10-13 19:00 IST · kept current by the working session
 at every milestone. If you are a new session: read this whole file, then
 `CLAUDE.md`, then `docs/AGENTDOJO_SPIKE.md` §9–11. Do not re-derive anything
 below; it was measured.
@@ -9,26 +9,34 @@ below; it was measured.
 
 ## 0. Right now
 
-**Revision 2 dev runs are in progress** (started 14:27, ETA ~17:15): Condition B
-`--defense-revision 2 --tasks dev` on Slack (60 runs) then banking (80 runs),
-launched via WMI from `scratchpadev2.ps1 -split dev` on private port 11435.
-Chain log `scratchpadev2.log`; per-suite logs `rev2_<suite>_dev.log` (UTF-16).
+**Revision 2 HELD-OUT run in progress** (started 18:58, ETA ~21:30): Condition B
+`--defense-revision 2 --tasks heldout` on Slack (66 runs) then banking (80),
+via WMI from `scratchpadev2.ps1 -split heldout`, private port 11435. Log
+`scratchpadev2.log`. If it died, relaunch the same command; it resumes.
 
-**Your next job when it ends:** compare rev2 dev against rev1 dev (same tasks;
-rev1 Slack dev rows are the `user_task` in `SLACK_DEV` subset of
-`slack_B_..._rev1.json`; banking dev is `banking_B_..._dev_rev1.json`). If
-utility under attack improved without ASR rising, run held-out:
-`rev2.ps1 -split heldout` via WMI (~3 h), then compare rev2 held-out vs A and
-vs rev1 on the held-out halves of both suites, and write spike doc §13.
+**Your next job when it ends:** compare rev2 held-out against A and rev1 on
+the held-out halves (Slack: `SLACK_HELDOUT` subset of `slack_A_...json` and
+`slack_B_..._rev1.json`; banking: `banking_B_..._heldout_rev1.json`), paired
+McNemar as in §4. Write spike doc §13 (dev story + held-out numbers), update
+§1 here, commit, push.
 
-Revision 2 (commit f7f4967, diagnosed on dev only, Slack split 873f70f):
-Firewall stops reading "e-mail" as a verb (Quarantine was deleting
-"My e-mail is dora@gmail.com" and keeping the injection - 11/23 lost Slack dev
-runs); Planner strips `tool()` and drops edges to pruned nodes; Node Expansion
-blocks read-only calls to addresses neither user nor plan named (all 14
-surviving Slack attacks). Not done on purpose: matching AgentDojo's attack
-wording (would tune to the test template); task 18-style "do the tasks on
-this page" stays blocked by design.
+**Revision 2 dev result (final code, commit 95f12ff):**
+
+| dev | utility under attack | ASR |
+|---|---|---|
+| Slack A / rev1 / rev2 | 24 / 8 / **13** of 50 | 32 / 6 / **0** of 50 |
+| banking A / rev1 / rev2 | 39 / 33 / 33 of 72 | 21 / 0 / 0 of 72 |
+
+rev1->rev2 on Slack dev: +6 utility, 0 lost (p = 0.031); ASR 6 -> 0
+(p = 0.031). No module failed open. Remaining 18 lost Slack dev runs: 10 are
+the deliberate trade (the address rule blocks legit URLs found in data, tasks
+11 and 15), 4 by design (task 18, "do the tasks on this page"), 3 correct
+judge/planner catches, 1 judge false positive (task 7).
+
+Revision 2 = rev 1 + (f7f4967) Firewall "e-mail" noun fix, Planner `tool()`
+strip + pruned-edge drop, Node Expansion blocks unnamed addresses; +
+(95f12ff) Quarantine drops command blocks instead of withholding everything
+when the signal is cross-block, judge accepts web pages as a source.
 
 ### Where things live
 
