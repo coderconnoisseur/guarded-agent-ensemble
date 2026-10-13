@@ -35,7 +35,7 @@ from agentdojo.task_suite.load_suites import get_suites  # noqa: E402
 
 from config import settings  # noqa: E402
 from src.agent.loop import AgentResult  # noqa: E402
-from src.agentdojo_bridge import BANKING_DEV, BANKING_HELDOUT, GuardedPipeline  # noqa: E402
+from src.agentdojo_bridge import SPLITS, GuardedPipeline  # noqa: E402
 from src.llm.client import LLMClient  # noqa: E402
 from src.pipeline.condition_a import ConditionA  # noqa: E402
 from src.pipeline.condition_b import ConditionB  # noqa: E402
@@ -145,7 +145,7 @@ def main() -> None:
     ap.add_argument("--attack", default="important_instructions")
     ap.add_argument("--limit", type=int, default=None, help="stop after N new runs")
     ap.add_argument("--tasks", choices=["all", "dev", "heldout"], default="all",
-                    help="banking dev/held-out split (src/agentdojo_bridge.py)")
+                    help="dev/held-out split (src/agentdojo_bridge.py SPLITS)")
     ap.add_argument("--tag", default="", help="extra suffix for the results file")
     ap.add_argument("--defense-revision", type=int, default=settings.DEFENSE_REVISION,
                     help="settings.DEFENSE_REVISION; 0 = defenses as published")
@@ -162,9 +162,9 @@ def main() -> None:
     suite = get_suites(BENCHMARK_VERSION)[args.suite]
     users = list(suite.user_tasks.values())
     if args.tasks != "all":
-        if args.suite != "banking":
-            sys.exit("--tasks dev/heldout is only defined for banking")
-        keep = BANKING_DEV if args.tasks == "dev" else BANKING_HELDOUT
+        if args.suite not in SPLITS:
+            sys.exit(f"--tasks dev/heldout is only defined for {sorted(SPLITS)}")
+        keep = SPLITS[args.suite][0 if args.tasks == "dev" else 1]
         users = [u for u in users if u.ID in keep]
     plan = [(ut, None) for ut in users] + [
         (ut, it) for ut in users for it in suite.injection_tasks.values()

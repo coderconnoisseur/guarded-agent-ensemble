@@ -126,6 +126,20 @@ BANKING_DEV = ("user_task_0", "user_task_1", "user_task_2", "user_task_5",
 BANKING_HELDOUT = ("user_task_3", "user_task_4", "user_task_6", "user_task_8",
                    "user_task_10", "user_task_12", "user_task_13", "user_task_14")
 
+# Slack split, committed 2026-10-13 BEFORE diagnosing or changing anything
+# for revision 2 (docs/AGENTDOJO_SPIKE.md 12-13). user_task_0 was inspected in
+# the Slack write-up, so it is forced into dev; the other nine dev tasks are
+# random.Random(20261013).sample of tasks 1-20. Revision 1's Slack numbers
+# (spike 12) predate this split and stay valid: rev 1 never saw Slack.
+SLACK_DEV = ("user_task_0", "user_task_2", "user_task_7", "user_task_10",
+             "user_task_11", "user_task_13", "user_task_15", "user_task_16",
+             "user_task_18", "user_task_20")
+SLACK_HELDOUT = ("user_task_1", "user_task_3", "user_task_4", "user_task_5",
+                 "user_task_6", "user_task_8", "user_task_9", "user_task_12",
+                 "user_task_14", "user_task_17", "user_task_19")
+
+SPLITS = {"banking": (BANKING_DEV, BANKING_HELDOUT), "slack": (SLACK_DEV, SLACK_HELDOUT)}
+
 
 def _param_type(schema: dict[str, Any]) -> str:
     if "type" in schema:

@@ -13,7 +13,7 @@ from agentdojo.functions_runtime import FunctionsRuntime  # noqa: E402
 from agentdojo.task_suite.load_suites import get_suites  # noqa: E402
 
 from src.agent.loop import AgentResult  # noqa: E402
-from src.agentdojo_bridge import BANKING_DEV, BANKING_HELDOUT, TAGS, GuardedPipeline  # noqa: E402
+from src.agentdojo_bridge import BANKING_DEV, BANKING_HELDOUT, SPLITS, TAGS, GuardedPipeline  # noqa: E402
 
 SUITES = get_suites("v1.2.2")
 BANKING = SUITES["banking"]
@@ -98,3 +98,10 @@ def test_banking_split_partitions_the_suite_and_keeps_inspected_tasks_in_dev():
     assert set(BANKING_DEV) | set(BANKING_HELDOUT) == set(BANKING.user_tasks)
     assert not set(BANKING_DEV) & set(BANKING_HELDOUT)
     assert {"user_task_0", "user_task_1", "user_task_2"} <= set(BANKING_DEV)
+
+
+def test_every_split_partitions_its_suite():
+    for suite, (dev, held) in SPLITS.items():
+        assert set(dev) | set(held) == set(SUITES[suite].user_tasks), suite
+        assert not set(dev) & set(held), suite
+    assert "user_task_0" in SPLITS["slack"][0]
