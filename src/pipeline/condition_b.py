@@ -250,7 +250,7 @@ class ConditionB:
         if self.planner is not None:
             graph = self.planner.build_plan(task, self.registry)
             enforcement = PlanEnforcement(
-                graph=graph, llm_calls=self.planner.llm_calls
+                graph=graph, llm_calls=self.planner.llm_calls, task=task
             )
             registry = PlanEnforcingRegistry(registry, enforcement)
 

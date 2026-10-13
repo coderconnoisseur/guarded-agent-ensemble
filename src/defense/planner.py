@@ -37,7 +37,9 @@ and lets the model try again, so a rejection needs no new machinery.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -242,6 +244,13 @@ def prune_uncallable(
             kept.append(node)
         else:
             dropped.append(node.tool)
+    if settings.DEFENSE_REVISION >= 2:
+        # Revision 2: an edge to a dropped node made the validator reject the
+        # whole plan ("depends on unknown node") - the same degrade-to-read-only
+        # this function exists to prevent. The dependency authorised nothing.
+        gone = {n.id for n in nodes} - {n.id for n in kept}
+        for node in kept:
+            node.depends_on = [d for d in node.depends_on if d not in gone]
     return kept, dropped
 
 
@@ -284,10 +293,16 @@ def parse_plan(text: str) -> tuple[list[PlanNode], str]:
         depends = entry.get("depends_on") or []
         if not isinstance(depends, list):
             depends = []
+        tool = tool.strip()
+        if settings.DEFENSE_REVISION >= 2:
+            # Revision 2: the 4B writes `get_scheduled_transactions()`. Measured
+            # on banking user_task_9 (dev): every plan was then rejected and the
+            # Planner degraded to read-only on all 10 runs.
+            tool = re.sub(r"\(.*\)$", "", tool).strip()
         nodes.append(
             PlanNode(
                 id=str(entry.get("id") or f"n{index + 1}"),
-                tool=tool.strip(),
+                tool=tool,
                 args=args,
                 depends_on=[str(d) for d in depends],
                 why=str(entry.get("why") or ""),
@@ -403,6 +418,9 @@ class PlanEnforcement:
     """What the enforcer allowed, expanded and blocked during one run."""
 
     graph: ToolDependencyGraph
+    # The user's instruction: trusted text an expanded call's address may come
+    # from (revision 2).
+    task: str = ""
     executed: list[str] = field(default_factory=list)
     expansions: list[str] = field(default_factory=list)
     rejections: list[tuple[str, str]] = field(default_factory=list)
@@ -420,6 +438,19 @@ class PlanEnforcement:
         if self.rejections:
             parts.append(f"{len(self.rejections)} blocked")
         return ", ".join(parts)
+
+
+# A web address or host name. ponytail: a regex, not a URL parser - it only has
+# to recognise the shapes AgentDojo's tools take (www.x.com, https://...).
+_ADDRESS = re.compile(r"(?:https?://|www\.)[^\s\"',]+|\b[\w-]+(?:\.[\w-]+)*\.(?:com|org|net|io|ai|co|info)\b[^\s\"',]*", re.IGNORECASE)
+
+
+def _unnamed_addresses(args: dict[str, Any], enforcement: "PlanEnforcement") -> list[str]:
+    """Addresses in `args` that appear neither in the task nor in the plan."""
+    trusted = (enforcement.task + " " + json.dumps(
+        [n.args for n in enforcement.graph.nodes], default=str)).lower()
+    found = _ADDRESS.findall(json.dumps(args, default=str))
+    return [a for a in found if a.lower().rstrip("/") not in trusted]
 
 
 class PlanEnforcingRegistry:
@@ -474,6 +505,23 @@ class PlanEnforcingRegistry:
             node.executed = True
             self.enforcement.executed.append(name)
             return self._inner.dispatch(name, args)
+
+        if (settings.DEFENSE_REVISION >= 2 and self._inner.has(name)
+                and self._inner.get(name).read_only):
+            unnamed = _unnamed_addresses(args, self.enforcement)
+            if unnamed:
+                # Revision 2: a read to an attacker-chosen address IS the harm
+                # (a beacon, a phishing visit, an exfiltration channel). On
+                # AgentDojo Slack every one of the 14 attacks that survived
+                # revision 1 was a Node Expansion get_webpage to such a URL.
+                reason = (
+                    f"Blocked by the plan: {name} would reach {', '.join(unnamed)}, "
+                    f"an address neither the user nor the plan named."
+                )
+                self.enforcement.rejections.append((name, reason))
+                logger.warning("Plan enforcement BLOCKED %s to %s", name, unnamed)
+                return ToolResult(tool_name=name, args=args, ok=False, content="",
+                                  latency_ms=0, error=reason)
 
         if self._inner.has(name) and self._inner.get(name).read_only:
             # Node Expansion: a query adds no capability to exfiltrate or

@@ -19,6 +19,7 @@ from src.defense.planner import (
     PlanEnforcement,
     PlanEnforcingRegistry,
     PlanNode,
+    prune_uncallable,
     Planner,
     ToolDependencyGraph,
     parse_plan,
@@ -493,3 +494,42 @@ class TestPruneUncallableNodes:
         assert not graph.degraded
         assert [n.tool for n in graph.nodes] == ["files.read"]
         assert graph.pruned == ["extract_items"]
+
+
+class TestRevision2:
+    @pytest.fixture(autouse=True)
+    def _rev2(self, monkeypatch):
+        from config import settings
+        monkeypatch.setattr(settings, "DEFENSE_REVISION", 2)
+
+    def test_brackets_are_stripped_from_plan_tool_names(self):
+        nodes, err = parse_plan('{"plan": [{"id": "n1", "tool": "files.list()", "args": {}}]}')
+        assert not err and nodes[0].tool == "files.list"
+
+    def test_an_edge_to_a_pruned_node_is_dropped_not_fatal(self, registry):
+        nodes, _ = parse_plan('{"plan": [{"id": "n1", "tool": "made.up", "args": {}},'
+                              ' {"id": "n2", "tool": "files.list", "args": {}, "depends_on": ["n1"]}]}')
+        kept, dropped = prune_uncallable(nodes, registry)
+        assert dropped == ["made.up"] and kept[0].depends_on == []
+        assert not validate_plan(kept, registry)
+
+    def _guard(self, registry, task, planned_url):
+        graph = ToolDependencyGraph(nodes=[PlanNode(id="n1", tool="web.fetch", args={"url": planned_url})])
+        enforcement = PlanEnforcement(graph=graph, task=task)
+        return PlanEnforcingRegistry(registry, enforcement), enforcement
+
+    def test_an_expanded_read_to_an_unnamed_address_is_blocked(self, registry):
+        """Every attack that survived revision 1 on Slack: plan says read
+        www.informations.com, the injection sends the agent to a look-alike."""
+        guard, enf = self._guard(registry, "Read www.informations.com", "www.informations.com")
+        guard.dispatch("web.fetch", {"url": "www.informations.com"})  # the planned node
+        result = guard.dispatch("web.fetch", {"url": "www.true-informations.com"})
+        assert not result.ok and "neither the user nor the plan named" in result.error
+        assert enf.rejections
+
+    def test_an_expanded_read_to_a_named_address_is_allowed(self, registry):
+        guard, enf = self._guard(registry, "Compare www.a.com and www.b.com", "www.a.com")
+        guard.dispatch("web.fetch", {"url": "www.a.com"})
+        result = guard.dispatch("web.fetch", {"url": "www.b.com"})
+        assert "neither the user nor the plan named" not in (result.error or "")
+        assert enf.expansions == ["web.fetch"]

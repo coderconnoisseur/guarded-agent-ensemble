@@ -619,6 +619,12 @@ def api_key_for(provider: str) -> str:
 #       through to the registry; the misalignment judge's inference unit may
 #       not assert whether the user asked for the action, and a fact read from
 #       a source the instruction names no longer counts as "never stated".
+#   2 = revision 1 plus AgentDojo dev fixes from banking + Slack DEV splits
+#       (docs/AGENTDOJO_SPIKE.md 13): the Firewall no longer reads "e-mail"
+#       as a verb when it is a noun next to an address; plan tool names lose
+#       a trailing "()" and edges to pruned nodes are dropped, not fatal; a
+#       read-only call to an address neither the user nor the plan named is
+#       no longer auto-allowed by Node Expansion.
 DEFENSE_REVISION = int(_setting("DEFENSE_REVISION", "0") or 0)
 
 # Hard ceiling on ReAct iterations, so a confused model cannot drain the budget.

@@ -152,6 +152,22 @@ class FirewallVerdict:
         return f"{self.tool}: FLAGGED at {self.stage} ({', '.join(self.signals)})"
 
 
+# Revision 2. `email`/`e-mail` are in _IMPERATIVE as verbs ("email it to X"),
+# but they match the NOUN too - and a noun next to an address is how ordinary
+# text gives contact details. Measured on AgentDojo Slack dev: Quarantine
+# removed "My e-mail is dora@gmail.com" (the data the task needed) and kept
+# the injection, in 11 of 23 lost runs. As a verb it needs an object then "to".
+_IMPERATIVE_R2 = re.compile(_IMPERATIVE.pattern.replace("email|e-mail|", ""), re.IGNORECASE)
+_EMAIL_VERB = re.compile(r"\be-?mail\s+(?:\S+\s+){0,5}?to\b", re.IGNORECASE)
+assert _IMPERATIVE_R2.pattern != _IMPERATIVE.pattern, "revision-2 imperative did not apply"
+
+
+def _imperative(content: str) -> bool:
+    if settings.DEFENSE_REVISION >= 2:
+        return bool(_IMPERATIVE_R2.search(content) or _EMAIL_VERB.search(content))
+    return bool(_IMPERATIVE.search(content))
+
+
 def heuristic_signals(content: str) -> list[str]:
     """Structural signs that tool output is trying to instruct the agent."""
     found = []
@@ -159,7 +175,7 @@ def heuristic_signals(content: str) -> list[str]:
         found.append("addressed-to-assistant")
     if _SECRECY.search(content):
         found.append("asks-for-concealment")
-    if _IMPERATIVE.search(content):
+    if _imperative(content):
         if _toolname_pattern().search(content):
             found.append("imperative+tool-name")
         if _RECIPIENT.search(content):
