@@ -340,7 +340,12 @@ class OllamaProvider(OpenAICompatibleProvider):
             return
         chars = sum(len(str(m.get("content") or "")) for m in messages)
         ratio = chars / tokens
-        if tokens in settings.OLLAMA_TRUNCATED_PROMPT_TOKENS or (
+        # The fingerprint alone is not enough: an intact prompt can be exactly
+        # 2050 tokens. Measured on Slack, 2026-10-13: 8119 chars, 2050 tokens,
+        # 4.0 chars/token - normal text, and the run was stopped for nothing.
+        # A real cut drops at least half, so it also shows a high ratio.
+        if (tokens in settings.OLLAMA_TRUNCATED_PROMPT_TOKENS
+                and ratio > settings.OLLAMA_FINGERPRINT_MIN_CHARS_PER_TOKEN) or (
             ratio > settings.OLLAMA_MAX_CHARS_PER_TOKEN
         ):
             raise ContextTruncatedError(

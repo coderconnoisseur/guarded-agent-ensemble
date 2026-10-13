@@ -1,6 +1,6 @@
 # Session dump — read this first to continue
 
-**Last updated:** 2026-10-13 10:30 IST · kept current by the working session
+**Last updated:** 2026-10-13 11:40 IST · kept current by the working session
 at every milestone. If you are a new session: read this whole file, then
 `CLAUDE.md`, then `docs/AGENTDOJO_SPIKE.md` §9–11. Do not re-derive anything
 below; it was measured.
@@ -14,7 +14,7 @@ below; it was measured.
 | | state (10:19) | ETA |
 |---|---|---|
 | Condition A (no defenses) | **done**, 126/126 (finished 09:58) | — |
-| Condition B (ensemble, `--defense-revision 1`) | 22/126 when the laptop hibernated at ~10:25 and killed the chain; relaunched via WMI 10:27, resumed at run 23 | ~12:35 |
+| Condition B (ensemble, `--defense-revision 1`) | relaunched 11:32 on private port **11435**, resumed at run 28 | ~13:40 |
 
 Then the chain stops Ollama by itself. **Your first job:** when it ends,
 analyse it (§4), write it up as `docs/AGENTDOJO_SPIKE.md` §12, update §1 of
@@ -56,10 +56,10 @@ Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ Comma
 ```powershell
 Add-Type -Namespace W -Name P -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'
 [W.P]::SetThreadExecutionState(0x80000001) | Out-Null   # keep awake while running
-$env:OLLAMA_MODELS = 'D:\ollama'; $env:OLLAMA_CONTEXT_LENGTH = '8192'
+$env:OLLAMA_MODELS = 'D:\ollama'; $env:OLLAMA_CONTEXT_LENGTH = '8192'; $env:OLLAMA_HOST = '127.0.0.1:11435'
 $srv = Start-Process ollama -ArgumentList serve -WindowStyle Hidden -RedirectStandardError "$S\slack_ollama.log" -RedirectStandardOutput "$S\slack_ollama.out" -PassThru
-for ($i=0; $i -lt 180; $i++) { try { Invoke-RestMethod -UseBasicParsing -TimeoutSec 2 http://127.0.0.1:11434/api/version | Out-Null; break } catch { Start-Sleep 2 } }
-$env:USE_LOCAL_BACKBONE = '1'; $env:OLLAMA_BASE_URL = 'http://127.0.0.1:11434/v1'; $env:PYTHONIOENCODING = 'utf-8'
+for ($i=0; $i -lt 180; $i++) { try { Invoke-RestMethod -UseBasicParsing -TimeoutSec 2 http://127.0.0.1:11435/api/version | Out-Null; break } catch { Start-Sleep 2 } }
+$env:USE_LOCAL_BACKBONE = '1'; $env:OLLAMA_BASE_URL = 'http://127.0.0.1:11435/v1'; $env:PYTHONIOENCODING = 'utf-8'
 Set-Location 'D:\Project\MinorProject\.claude\worktrees\c-drive-cleanup-77931b'
 python -u demos/agentdojo_run.py --suite slack --condition A --model qwen3:4b-instruct-2507-q4_K_M *>> "$S\slack_A.log"
 python -u demos/agentdojo_run.py --suite slack --condition B --model qwen3:4b-instruct-2507-q4_K_M --defense-revision 1 *>> "$S\slack_B.log"
@@ -171,6 +171,8 @@ blocked by replaying from cache (`ConditionB` + `GuardedPipeline`, look for
   thinking (51 s/turn) — use the `-instruct-2507` build.
 - Groq limits move: safeguard model went 8000 → 2000 TPM in two days. Guard
   model RPM 30 per model. Probe before trusting.
+- **Use a private port (11435).** After a wake-up, Ollama's tray app auto-starts its own server on 11434 with the default window and model folder.
+- **Truncation guard false alarm fixed** (13 Oct): an intact prompt of exactly 2050 tokens tripped the fingerprint; it now also needs > 5 chars/token.
 - **Hibernating kills the run** (13 Oct 10:25, B at 22/126) — relaunch via WMI; it resumes.
 - The PC can suspend mid-run (the user's auto-hibernate calls the suspend
   API); a run's wall time then includes the sleep.

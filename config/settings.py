@@ -508,6 +508,11 @@ OLLAMA_CONTEXT_LENGTH = int(_setting("OLLAMA_CONTEXT_LENGTH", "24576") or 24576)
 #     so it at least doubles the ratio.
 OLLAMA_TRUNCATED_PROMPT_TOKENS = frozenset({2050})
 OLLAMA_MAX_CHARS_PER_TOKEN = 7.5
+# The 2050 fingerprint only counts with a ratio no intact prompt reaches at
+# that length. Truncation cuts a >4096-token prompt to 2050, i.e. at least
+# ~2x the intact ratio: 7.0 even for dense YAML (3.5). An intact 2050-token
+# prompt measured 4.0 (false alarm, Slack, 2026-10-13).
+OLLAMA_FINGERPRINT_MIN_CHARS_PER_TOKEN = 5.0
 
 # Switching the backbone to the local arm. Deliberately NOT a change to
 # BACKBONE_MODEL: §9.1's comparison requires one pinned backbone, and every

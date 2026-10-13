@@ -467,8 +467,13 @@ class TestTruncationGuard:
         OllamaProvider().check_prompt_intact(_msgs(10_000), _reply(2578))
 
     def test_the_measured_truncation_size_raises(self):
+        # The measured cut: 31,796 chars came back as 2050 tokens.
         with pytest.raises(ContextTruncatedError, match="OLLAMA_CONTEXT_LENGTH"):
-            OllamaProvider().check_prompt_intact(_msgs(8_000), _reply(2050))
+            OllamaProvider().check_prompt_intact(_msgs(14_000), _reply(2050))
+
+    def test_an_intact_prompt_of_exactly_2050_tokens_passes(self):
+        # Measured false alarm, Slack 2026-10-13: 8119 chars, 2050 tokens.
+        OllamaProvider().check_prompt_intact(_msgs(8_119), _reply(2050))
 
     def test_too_many_chars_per_token_raises(self):
         # The measured 10k-token prompt: 31,796 chars reported as 2050 tokens
@@ -500,7 +505,7 @@ class TestTruncationThroughTheClient:
     def test_a_truncated_reply_raises_and_is_never_cached(self, tmp_path, monkeypatch):
         client = self._client(tmp_path, monkeypatch, 2050)
         with pytest.raises(ContextTruncatedError):
-            client.chat(_msgs(8_000))
+            client.chat(_msgs(14_000))
         cache_dir = tmp_path / "cache"
         assert not cache_dir.exists() or not any(cache_dir.iterdir())
 
