@@ -1,6 +1,6 @@
 # Session dump — read this first to continue
 
-**Last updated:** 2026-10-13 19:45 IST · kept current by the working session
+**Last updated:** 2026-10-13 21:50 IST · kept current by the working session
 at every milestone. If you are a new session: read this whole file, then
 `CLAUDE.md`, then `docs/AGENTDOJO_SPIKE.md` §9–11. Do not re-derive anything
 below; it was measured.
@@ -9,15 +9,21 @@ below; it was measured.
 
 ## 0. Right now
 
-**Nothing is running.** Revision 2 dev and held-out both finished (19:36,
-13 Oct); written up as `docs/AGENTDOJO_SPIKE.md` §13. Waiting on the user's
-choice (§3 item 0).
+**Revision 3 run in progress** (started 21:42, ETA ~00:15): Condition B
+`--defense-revision 3 --planner-model qwen/qwen3.8-27b`, dev then held-out,
+Slack then banking, via WMI from `scratchpadev3.ps1` (port 11435). Log
+`scratchpadev3.log`, ends with "DONE all". Relaunch the same way if it died.
 
-**Headline of §13:** revision 2 closed the last Slack attack channel (held-out
-ASR 8/55 -> 0/55, p = 0.0078) but **cost utility on Slack held-out**
-(9/55 -> 2/55, p = 0.039); 9 of 10 lost runs = the new address rule blocking
-legitimate links found inside messages. Banking held-out unchanged (0/72 ASR,
-utility = undefended). Dev had shown +6 utility; it did not generalise.
+**Then:** compare rev3 vs rev1 (and A) on dev and held-out, both suites,
+paired McNemar. Rev 3 held-out is **post hoc** (dropping the address rule was
+decided after seeing rev 2 held-out) - label it so. Write spike doc §14,
+commit, push. The user chose to report rev 1 and rev 2 as trade-off points.
+
+**Since §13:** Lever 1 (27B planner on rev 1) = no Slack dev gain (8 -> 8/50),
+banking +2 n.s. A truncated-plan bug (400 tokens) and four orphaned
+`llama-server` processes (3.8/4 GB VRAM, CUDA OOM) were found and fixed
+(b977a5c; chain scripts now kill the server's children; prof_run.py too).
+Revision 3 = rev 2 minus the unnamed-address rule (a1f9cbe).
 
 ### Where things live
 
