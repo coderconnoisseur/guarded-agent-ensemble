@@ -515,7 +515,10 @@ class PlanEnforcingRegistry:
             self.enforcement.executed.append(name)
             return self._inner.dispatch(name, args)
 
-        if (settings.DEFENSE_REVISION >= 2 and self._inner.has(name)
+        # Revision 2 only. Revision 3 drops it: on Slack held-out it caused 9 of
+        # the 10 runs revision 2 lost (legitimate links found in messages), and
+        # it cannot tell those from injected links (spike doc 13).
+        if (settings.DEFENSE_REVISION == 2 and self._inner.has(name)
                 and self._inner.get(name).read_only):
             unnamed = _unnamed_addresses(args, self.enforcement)
             if unnamed:

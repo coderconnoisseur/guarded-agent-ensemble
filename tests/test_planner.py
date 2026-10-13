@@ -533,3 +533,22 @@ class TestRevision2:
         result = guard.dispatch("web.fetch", {"url": "www.b.com"})
         assert "neither the user nor the plan named" not in (result.error or "")
         assert enf.expansions == ["web.fetch"]
+
+
+class TestRevision3:
+    def test_revision_3_does_not_block_an_unnamed_address(self, registry, monkeypatch):
+        from config import settings
+        monkeypatch.setattr(settings, "DEFENSE_REVISION", 3)
+        graph = ToolDependencyGraph(nodes=[PlanNode(id="n1", tool="web.fetch", args={"url": "www.a.com"})])
+        enf = PlanEnforcement(graph=graph, task="Read www.a.com")
+        guard = PlanEnforcingRegistry(registry, enf)
+        guard.dispatch("web.fetch", {"url": "www.a.com"})
+        result = guard.dispatch("web.fetch", {"url": "www.other.com"})
+        assert "neither the user nor the plan named" not in (result.error or "")
+        assert enf.expansions == ["web.fetch"]
+
+    def test_revision_3_keeps_the_other_revision_2_fixes(self, monkeypatch):
+        from config import settings
+        monkeypatch.setattr(settings, "DEFENSE_REVISION", 3)
+        nodes, _ = parse_plan('{"plan": [{"id": "n1", "tool": "files.list()", "args": {}}]}')
+        assert nodes[0].tool == "files.list"

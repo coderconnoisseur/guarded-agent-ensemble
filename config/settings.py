@@ -632,6 +632,10 @@ def api_key_for(provider: str) -> str:
 #       a trailing "()" and edges to pruned nodes are dropped, not fatal; a
 #       read-only call to an address neither the user nor the plan named is
 #       no longer auto-allowed by Node Expansion.
+#   3 = revision 2 WITHOUT the unnamed-address rule (its held-out utility
+#       cost, spike doc 13). Chosen after seeing revision 2's held-out
+#       result, so revision 3's held-out numbers are post hoc; run with the
+#       27B planner (--planner-model).
 DEFENSE_REVISION = int(_setting("DEFENSE_REVISION", "0") or 0)
 
 # Hard ceiling on ReAct iterations, so a confused model cannot drain the budget.
