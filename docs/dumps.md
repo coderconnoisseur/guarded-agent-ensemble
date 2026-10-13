@@ -1,6 +1,6 @@
 # Session dump — read this first to continue
 
-**Last updated:** 2026-10-13 10:20 IST · kept current by the working session
+**Last updated:** 2026-10-13 10:30 IST · kept current by the working session
 at every milestone. If you are a new session: read this whole file, then
 `CLAUDE.md`, then `docs/AGENTDOJO_SPIKE.md` §9–11. Do not re-derive anything
 below; it was measured.
@@ -14,7 +14,7 @@ below; it was measured.
 | | state (10:19) | ETA |
 |---|---|---|
 | Condition A (no defenses) | **done**, 126/126 (finished 09:58) | — |
-| Condition B (ensemble, `--defense-revision 1`) | 19/126, ~66 s/run | ~12:20 |
+| Condition B (ensemble, `--defense-revision 1`) | 22/126 when the laptop hibernated at ~10:25 and killed the chain; relaunched via WMI 10:27, resumed at run 23 | ~12:35 |
 
 Then the chain stops Ollama by itself. **Your first job:** when it ends,
 analyse it (§4), write it up as `docs/AGENTDOJO_SPIKE.md` §12, update §1 of
@@ -171,6 +171,7 @@ blocked by replaying from cache (`ConditionB` + `GuardedPipeline`, look for
   thinking (51 s/turn) — use the `-instruct-2507` build.
 - Groq limits move: safeguard model went 8000 → 2000 TPM in two days. Guard
   model RPM 30 per model. Probe before trusting.
+- **Hibernating kills the run** (13 Oct 10:25, B at 22/126) — relaunch via WMI; it resumes.
 - The PC can suspend mid-run (the user's auto-hibernate calls the suspend
   API); a run's wall time then includes the sleep.
 - `pytest | tail` hides failures; check the exit code before committing.
