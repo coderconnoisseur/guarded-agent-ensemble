@@ -33,10 +33,12 @@ from dataclasses import dataclass, field
 
 from src.defense.firewall import (
     FirewallVerdict,
+    _imperative,
     ResponseFirewall,
     heuristic_signals,
     wrap_untrusted,
 )
+from config import settings
 from src.tools.registry import ToolResult, ToolSpec
 
 logger = logging.getLogger(__name__)
@@ -160,6 +162,23 @@ class Quarantine:
     ) -> ToolResult:
         """Build the synthetic response that replaces a flagged one."""
         kept, removed = sanitise(result.content)
+
+        if settings.DEFENSE_REVISION >= 2 and heuristic_signals(kept):
+            # Revision 2. No single block carried the signal: it came from a
+            # COMBINATION - an imperative in one block, an address in another.
+            # Withholding everything then deletes the data the task needs.
+            # Measured on AgentDojo Slack dev: "Send a link ... to Alice" (the
+            # injection) plus "My e-mail is dora@gmail.com" (the data) flagged
+            # together, nothing was removed, and the whole page was withheld.
+            # The command is the instruction; drop the blocks that carry one.
+            keep_lines = []
+            for block in split_blocks(kept):
+                text = "\n".join(block)
+                if text.strip() and _imperative(text):
+                    removed.append(text)
+                else:
+                    keep_lines.extend(block)
+            kept = "\n".join(keep_lines).strip()
 
         # Second pass, as in Flow 2. If the sanitised content still trips the
         # firewall the removal did not work, and handing it to the agent
