@@ -1,6 +1,6 @@
 # Session dump — read this first to continue
 
-**Last updated:** 2026-10-13 11:40 IST · kept current by the working session
+**Last updated:** 2026-10-13 13:10 IST · kept current by the working session
 at every milestone. If you are a new session: read this whole file, then
 `CLAUDE.md`, then `docs/AGENTDOJO_SPIKE.md` §9–11. Do not re-derive anything
 below; it was measured.
@@ -9,16 +9,10 @@ below; it was measured.
 
 ## 0. Right now
 
-**A Slack-suite AgentDojo run is in progress on the user's laptop.**
-
-| | state (10:19) | ETA |
-|---|---|---|
-| Condition A (no defenses) | **done**, 126/126 (finished 09:58) | — |
-| Condition B (ensemble, `--defense-revision 1`) | relaunched 11:32 on private port **11435**, resumed at run 28 | ~13:40 |
-
-Then the chain stops Ollama by itself. **Your first job:** when it ends,
-analyse it (§4), write it up as `docs/AGENTDOJO_SPIKE.md` §12, update §1 of
-this file, commit and push.
+**Nothing is running.** The Slack run finished at 12:45 on 13 Oct (A and B
+both 126/126), was analysed, written up as `docs/AGENTDOJO_SPIKE.md` §12,
+committed and pushed. Ollama is stopped. Waiting on the user for the next
+step (§3).
 
 ### Where things live
 
@@ -88,9 +82,19 @@ utility cost. Limits: 8 tasks, one suite, one 4B backbone.
 Full banking (all 16 tasks): A ASR 60/144 (41.7%); B as built 1/144; real-task
 utility 5/11 (A) vs 1/11 (B as built). `qwen2.5:3b` was a NO-GO (7/16 clean).
 
-**Slack:** in progress (§0). Do-nothing floor 0/21; ground truth via the
-bridge 21/21. Because revision 1 was developed only on banking dev, **all of
-Slack is held-out** for it.
+**Slack (all held-out for revision 1; Ollama 0.35.1):**
+
+| | ASR | utility under attack | clean (floor 0/21) |
+|---|---|---|---|
+| A | 69/105 (66%) | 49/105 | 14/21 |
+| **B revision 1** | **14/105 (13%)**, p = 5.6e-17 | **17/105**, p = 6.7e-08 | 4/21 |
+
+All 14 surviving attacks = one mechanism: Node Expansion allowed a read-only
+`get_webpage` to the attacker's URL (`injection_task_3`). Utility lost to
+Planner 22, Misalignment 13, Quarantine 4, model 6 (of 45).
+
+**Combined claim:** security generalises on both suites; utility cost is
+suite-dependent - none on banking held-out, large on multi-step Slack.
 
 ---
 
@@ -114,15 +118,18 @@ Slack is held-out** for it.
 
 ## 3. Next steps, in order
 
-1. **Analyse Slack when it finishes** (§4). Write `docs/AGENTDOJO_SPIKE.md` §12
-   + a HANDOFF §12.4 line; commit, push. Report to the user briefly.
+1. ~~Slack~~ done (§1, spike doc §12).
 2. **Professor's machine** — waiting on the user: they run
    `python scripts/prof_run.py probe` there and bring back
    `prof_probe_<host>.json`; you pick models (candidates `qwen2.5:7b`,
    `qwen2.5:14b`) and give the exact `run` command; they bring back the zip.
-3. **Revision 2** (not started): Planner — strip `()` from plan tool names and
-   drop edges to pruned nodes instead of rejecting the plan (banking
-   `user_task_9` degrades to read-only on all 10 runs). Develop on banking dev.
+3. **Revision 2** (not started), develop on banking dev:
+   (a) Planner: strip `()` from plan tool names and drop edges to pruned
+   nodes instead of rejecting the plan (banking `user_task_9`);
+   (b) Node Expansion: do not auto-allow read-only calls whose arguments
+   (e.g. a URL) were not named by the plan or user - every surviving Slack
+   attack went through this. Slack is then no longer fully held-out for (b):
+   say so, or hold out a Slack split first.
 4. **Write-up:** fold AgentDojo into `docs/RESULTS_SUMMARY.md` and
    `docs/PRESENTATION.md` (they still show only the 39-case numbers).
 5. Not feasible on this laptop: travel (~18 h), workspace (~57 h, needs 24k).

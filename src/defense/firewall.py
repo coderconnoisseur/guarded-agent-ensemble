@@ -295,6 +295,12 @@ class ResponseFirewall:
         """Second opinion from the purpose-built injection classifier."""
         if not self.enable_guard_model:
             return FirewallVerdict(flagged=False, stage="clean", tool=tool)
+        if not content.strip():
+            # Nothing to classify, and Groq rejects an empty message with a
+            # 400 that read as the guard failing open. Measured on Slack,
+            # 2026-10-13: 14 "fail-open" runs were all an empty attacker page.
+            return FirewallVerdict(flagged=False, stage="skipped", tool=tool,
+                                   reason="empty response")
 
         assert self.client is not None
         try:

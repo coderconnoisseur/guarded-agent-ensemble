@@ -143,6 +143,16 @@ class TestGuardModel:
         assert verdict.stage == "heuristic"
         assert client.calls == 0
 
+    def test_an_empty_response_is_not_sent_to_the_guard(self):
+        """Groq answers an empty message with a 400, which used to be
+        recorded as the guard failing open (Slack, 2026-10-13)."""
+        client = GuardClient("0.0")
+        firewall = ResponseFirewall(client=client)
+        spec = build_default_registry().get("web.fetch")
+        verdict = firewall.scan(spec, "   ")
+        assert client.calls == 0 and not verdict.flagged
+        assert "unavailable" not in verdict.reason
+
     def test_a_dead_guard_model_degrades_rather_than_disabling(self):
         firewall = ResponseFirewall(client=GuardClient(LLMError("down")))
         spec = build_default_registry().get("web.fetch")

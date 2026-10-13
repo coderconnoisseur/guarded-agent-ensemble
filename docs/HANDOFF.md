@@ -1444,6 +1444,11 @@ results look better before it was caught.
 > **Revision 1, held-out (spike doc §11), 2026-10-06:** ASR 39/72 → **0/72**
 > (p = 3.6e-12) with utility under attack **32/72 vs 34/72 undefended
 > (p = 0.82)**. 8 tasks, one suite, one 4B — state the n with it.
+>
+> **Slack, 2026-10-13 (spike doc §12):** ASR 66% → **13%** (p = 5.6e-17),
+> but utility under attack 47% → **16%** (p = 6.7e-08). All 14 surviving
+> attacks: Node Expansion allowed a read-only `get_webpage` to the
+> attacker's URL.
 
 The professor asked whether the work has been run on a research-level
 benchmark. The honest answer is **partially**:
