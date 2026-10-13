@@ -69,6 +69,7 @@ class ConditionB:
         registry: ToolRegistry | None = None,
         enabled_modules: set[str] | None = None,
         judge_model: str | None = None,
+        planner_model: str | None = None,
         model: str | None = None,
         use_chain: bool = False,
         enable_harm_classifier: bool = True,
@@ -105,7 +106,12 @@ class ConditionB:
             else None
         )
         self.planner = (
-            Planner(client=client, model=self.model)
+            # The planner need not be the actor either, for the judge's reason
+            # below: it never sees tool output, so a stronger one costs no
+            # security. Measured on AgentDojo Slack: wrong or missing plan
+            # steps written by the 4B backbone blocked 22 of 45 lost runs.
+            # None = the backbone, as every published number used.
+            Planner(client=client, model=planner_model or self.model)
             if "planner" in self.enabled_modules
             else None
         )

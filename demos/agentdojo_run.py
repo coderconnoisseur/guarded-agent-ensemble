@@ -149,6 +149,8 @@ def main() -> None:
     ap.add_argument("--tag", default="", help="extra suffix for the results file")
     ap.add_argument("--defense-revision", type=int, default=settings.DEFENSE_REVISION,
                     help="settings.DEFENSE_REVISION; 0 = defenses as published")
+    ap.add_argument("--planner-model", default=None,
+                    help="Condition B only: model that writes the plan (default: the backbone)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
@@ -171,7 +173,8 @@ def main() -> None:
     ]
     settings.DEFENSE_REVISION = args.defense_revision
     rev = f"rev{args.defense_revision}" if args.defense_revision else ""
-    tag = "_".join(t for t in (args.tasks if args.tasks != "all" else "", rev, args.tag) if t)
+    plan_tag = f"plan-{args.planner_model.replace('/', '-').replace(':', '-')}" if args.planner_model else ""
+    tag = "_".join(t for t in (args.tasks if args.tasks != "all" else "", rev, plan_tag, args.tag) if t)
     path = results_path(args.suite, args.condition, args.model, args.attack, tag)
     rows: list[dict] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
     done = {(r["user_task"], r["injection_task"]) for r in rows}
@@ -193,7 +196,10 @@ def main() -> None:
     with LLMClient() as client:
         def make_runner(registry):
             cls = ConditionA if args.condition == "A" else ConditionB
-            return cls(client, registry=registry, model=args.model, max_steps=MAX_STEPS)
+            if args.condition == "A":
+                return cls(client, registry=registry, model=args.model, max_steps=MAX_STEPS)
+            return cls(client, registry=registry, model=args.model, max_steps=MAX_STEPS,
+                       planner_model=args.planner_model)
 
         pipeline = GuardedPipeline(make_runner, f"condition-{args.condition.lower()}")
         attack = load_attack(args.attack, suite, pipeline)
@@ -226,6 +232,7 @@ def main() -> None:
                 "failed_open": fail_open(result),
                 "backbone_model": args.model,
                 "defense_revision": args.defense_revision,
+                "planner_model": args.planner_model,
                 "benchmark_version": BENCHMARK_VERSION,
             })
             path.write_text(json.dumps(rows, indent=1), encoding="utf-8")
