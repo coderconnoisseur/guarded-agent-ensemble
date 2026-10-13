@@ -1,6 +1,6 @@
 # Session dump — read this first to continue
 
-**Last updated:** 2026-10-13 09:25 IST · kept current by the working session
+**Last updated:** 2026-10-13 10:20 IST · kept current by the working session
 at every milestone. If you are a new session: read this whole file, then
 `CLAUDE.md`, then `docs/AGENTDOJO_SPIKE.md` §9–11. Do not re-derive anything
 below; it was measured.
@@ -11,10 +11,10 @@ below; it was measured.
 
 **A Slack-suite AgentDojo run is in progress on the user's laptop.**
 
-| | state (09:20) | ETA |
+| | state (10:19) | ETA |
 |---|---|---|
-| Condition A (no defenses) | 89/126 runs, ~41 s/run | ~09:45 |
-| Condition B (ensemble, `--defense-revision 1`) | not started | ~12:35 |
+| Condition A (no defenses) | **done**, 126/126 (finished 09:58) | — |
+| Condition B (ensemble, `--defense-revision 1`) | 19/126, ~66 s/run | ~12:20 |
 
 Then the chain stops Ollama by itself. **Your first job:** when it ends,
 analyse it (§4), write it up as `docs/AGENTDOJO_SPIKE.md` §12, update §1 of
