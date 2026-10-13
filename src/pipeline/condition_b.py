@@ -111,7 +111,8 @@ class ConditionB:
             # security. Measured on AgentDojo Slack: wrong or missing plan
             # steps written by the 4B backbone blocked 22 of 45 lost runs.
             # None = the backbone, as every published number used.
-            Planner(client=client, model=planner_model or self.model)
+            Planner(client=client, model=planner_model or self.model,
+                    max_tokens=settings.PLANNER_MAX_TOKENS if planner_model else None)
             if "planner" in self.enabled_modules
             else None
         )

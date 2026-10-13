@@ -205,7 +205,15 @@ def run(args: argparse.Namespace) -> None:
                 entry[cond] = {"exit": rc, "hours": round((time.time() - started) / 3600, 2)}
                 say(f"   Condition {cond}: exit {rc} after {entry[cond]['hours']} h")
     finally:
-        server.terminate()
+        # Kill the whole tree: `ollama serve` starts the model as a child
+        # (llama-server) that survives terminate() and keeps holding the GPU.
+        # Measured on the laptop: four such orphans held 3.8 of 4 GB and the
+        # next run died with CUDA out of memory.
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(server.pid)],
+                           capture_output=True)
+        else:
+            server.terminate()
         manifest["finished"] = datetime.now().strftime("%Y%m%d-%H%M")
         bundle(manifest, probe_path, log.name, stamp)
         log.close()

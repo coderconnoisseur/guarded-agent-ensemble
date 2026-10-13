@@ -123,6 +123,13 @@ DEFAULT_TEMPERATURE = 0.0
 # time depending on what else had run that minute.
 DEFAULT_MAX_TOKENS = 400
 
+# Reply budget for a SEPARATE planner model only (ConditionB planner_model).
+# MEASURED 2026-10-13: the hosted 27B's plans for multi-step Slack tasks were
+# truncated at 400 ("a '}' is missing"), degrading the Planner on 12/60 dev
+# runs. 900 stays under Groq's 1000 output-tokens/minute for one call; the
+# client retries if the judge's calls in the same minute push it over.
+PLANNER_MAX_TOKENS = 900
+
 
 # ---------------------------------------------------------------------------
 # Google Gemini (second backend, same client.chat() interface)

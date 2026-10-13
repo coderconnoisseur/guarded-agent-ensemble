@@ -321,9 +321,15 @@ class Planner:
         client: LLMClient,
         model: str | None = None,
         max_attempts: int = 2,
+        max_tokens: int | None = None,
     ) -> None:
         self.client = client
         self.model = model or settings.BACKBONE_MODEL
+        # None = the client default, as every published run used (it is part
+        # of the cache key). Set only for a separate planner model: the 27B's
+        # Slack plans were cut off at 400 tokens - "a '}' is missing" - and
+        # the Planner degraded to read-only on 12/60 dev runs.
+        self.max_tokens = max_tokens
         self.max_attempts = max_attempts
         self.llm_calls = 0
 
@@ -348,7 +354,10 @@ class Planner:
         problems: list[str] = []
         for attempt in range(self.max_attempts):
             try:
-                response = self.client.chat(messages, model=self.model)
+                response = self.client.chat(
+                    messages, model=self.model,
+                    **({"max_tokens": self.max_tokens} if self.max_tokens else {}),
+                )
             except LLMError as exc:
                 logger.warning("Planner call failed (%s); degrading", exc)
                 return self._degraded(registry, f"planner unavailable: {exc}")
