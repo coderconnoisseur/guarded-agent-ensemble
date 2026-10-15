@@ -1,0 +1,22 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      # No API keys and no network: HTTP is stubbed in the tests. Tests that
+      # read the gitignored results/ directory, and the AgentDojo bridge tests
+      # (requirements-agentdojo.txt is not installed here), skip themselves.
+      - name: Run tests
+        run: python -m pytest -q -rs

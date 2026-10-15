@@ -45,8 +45,12 @@ like a bad key.
 python -m pytest
 ```
 
-**446 tests, zero network calls, no API key needed.** HTTP is stubbed with
-`httpx.MockTransport` throughout. If this passes, the install is good.
+**733 tests collected, zero network calls, no API key needed.** HTTP is
+stubbed with `httpx.MockTransport` throughout. If this passes, the install is
+good. On a fresh clone, 12 tests in `tests/test_replay.py` skip because they
+read the gitignored `results/` directory, and the 23 tests in
+`tests/test_agentdojo_bridge.py` skip unless `requirements-agentdojo.txt` is
+installed.
 
 This is also the fastest way to see what the project claims: the tests are
 written as statements about behaviour, and several encode bugs that were
