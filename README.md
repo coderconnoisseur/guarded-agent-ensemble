@@ -270,3 +270,7 @@ Each module adapts one paper; the PDFs are not redistributed here (see
 Related-work check against published systems: [docs/RELATED_WORK.md](docs/RELATED_WORK.md).
 Original design spec: [CLAUDE.md](CLAUDE.md). Build log:
 [docs/PROGRESS.md](docs/PROGRESS.md) and [docs/HANDOFF.md](docs/HANDOFF.md).
+
+## License
+
+[MIT](LICENSE)
