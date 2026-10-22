@@ -784,3 +784,102 @@ by design; legitimate links found in data, which no call-only defense can tell
 from injected ones; and a 4B backbone whose own mistakes every module then
 amplifies. The next step that could move it is a stronger backbone
 (professor's machine), and an unseen suite (travel) for a clean test.
+
+
+---
+
+## 15. Baselines: AgentDojo's own defenses on the same backbone — plan, 2026-10-23
+
+The first thing a reviewer asks: is the ensemble better than the defenses
+AgentDojo already ships? Nothing below has been run. This section records
+what is wired, how each baseline differs from AgentDojo's version, and what
+the runs will cost. It is written before any baseline run so the comparison
+cannot be picked after seeing the results.
+
+### 15.1 What is wired, and how
+
+AgentDojo 0.1.35 ships four defenses (`agent_pipeline.DEFENSES`). It builds
+each one from pipeline elements around its own native tool-calling LLM classes
+(`AgentPipeline.from_config`). Our agent uses the prompted-JSON loop instead
+(CLAUDE.md 5.3), so none of them plugs in as is. Each is ported to the place
+in our loop that does the same job: the tool result on its way back to the
+model, or the system prompt. `BaselineRunner` in `src/agentdojo_bridge.py` is
+Condition A's loop, prompt, backbone and 15-step budget with exactly one
+defense added. Conditions A and B are unchanged. The only shared edit is an
+optional `system_suffix` on `ReActAgent`; it defaults to `""`, so the prompts
+and cache keys of A and B stay byte-identical (tested).
+
+| `--condition` | supported | what it does here | differs from AgentDojo's version |
+|---|---|---|---|
+| `spotlighting_with_delimiting` | **yes** | AgentDojo's sentence, word for word, appended to the system prompt; every successful tool output wrapped as `<<...>>` | none that matters: errors go back undelimited in both |
+| `repeat_user_prompt` | **yes** | the user's task is repeated after every tool output | AgentDojo adds the task as a separate user message. Our observation is already the user turn, so the task is appended to it |
+| `tool_filter` | **yes, ported** | one call to the backbone before the agent starts: the tool catalogue, the task, then AgentDojo's `TOOL_FILTER_PROMPT` (imported). It keeps every tool whose name appears in the reply, AgentDojo's own substring rule | AgentDojo allows it only for OpenAI models because it uses OpenAI's client and native tool schemas. Here the backbone does the filtering, and the tools are listed in our text catalogue. The agent does not see the filter exchange (AgentDojo's agent does). Adds 1 model call per run |
+| `transformers_pi_detector` | **yes, not yet runnable** | AgentDojo's own `TransformersBasedPIDetector` (imported; `protectai/deberta-v3-base-prompt-injection-v2`, threshold 0.5, `mode="message"`) checks every successful tool output. A flagged output is replaced with AgentDojo's placeholder | none. **Prerequisite:** the detector model is not on this machine. It is about 0.7 GB, downloaded from Hugging Face the first time it is used, and the user has to approve that download. torch 2.13 here is CPU-only, so the classifier does not compete with Ollama for the 4 GB card. Never run end to end here: per-output latency and behaviour on outputs longer than 512 tokens are unmeasured |
+
+Results rows for baselines add `agentdojo_defense`: the tools the filter kept,
+or `pi_checked` / `pi_flagged`. `exposed` still means "the payload reached a
+tool output", as it does for B, even when the detector later blanked that
+output. `defense_revision` is `null`, because our revisions do not apply to
+these defenses.
+
+Tests (`tests/test_agentdojo_bridge.py`, scripted client, no model, no
+network): A's system prompt is unchanged; each defense changes exactly what it
+should on banking `user_task_0`; a filtered-out tool is uncallable and never
+reaches AgentDojo's runtime; the detector stub blanks the real
+`important_instructions` payload and passes clean output through.
+
+### 15.2 Runs and estimated cost (`--dry-run`, 2026-10-23)
+
+Same setup as every row in §9–14: `qwen3:4b-instruct-2507-q4_K_M` on Ollama,
+the `important_instructions` attack, 15 steps, the same Ollama window as
+Condition A's rows (8192). Held-out splits only. These defenses were never
+developed on any split, but held-out is where the B revisions are reported,
+so the paired comparison lines up. Each command is:
+
+    USE_LOCAL_BACKBONE=1 python demos/agentdojo_run.py --suite <banking|slack> --tasks heldout \
+        --model qwen3:4b-instruct-2507-q4_K_M --condition <name>
+
+The estimate is the new `measured:` line in the dry run. It takes Condition
+A's own rows on exactly these runs: calls per run, plus the baseline's extra
+calls, times A's wall-clock seconds per **uncached** call. Every baseline
+changes the prompt, so almost none of A's cache carries over.
+
+| baseline | banking held-out (80 runs) | Slack held-out (66 runs) |
+|---|---|---|
+| `spotlighting_with_delimiting` | 349 calls, **~1.2 h** | 479 calls, **~1.2 h** |
+| `repeat_user_prompt` | 349 calls, **~1.2 h** (a floor) | 479 calls, **~1.2 h** (a floor) |
+| `tool_filter` | 429 calls, **~1.4 h** | 545 calls, **~1.3 h** |
+| `transformers_pi_detector` | 349 calls, **~1.2 h** + classifier | 479 calls, **~1.2 h** + classifier |
+| per-call basis (from A) | 4.36 calls/run, 12.0 s/call | 7.26 calls/run, 8.7 s/call |
+
+**About 10 h in total** (banking ~5.0 h, Slack ~4.9 h), before the detector's
+CPU time. It is unmeasured, but it is one classifier pass per tool output
+against 9–12 s per model call. `repeat_user_prompt` makes every observation
+longer, so its calls will be slower than A's, and on long Slack runs it is the
+baseline most likely to hit the 8192 window (the client raises rather than
+truncate). The old `estimate:` line (3.4 calls at 7.2 s) is a pre-AgentDojo
+floor; the `measured:` line replaces it. The ~10 h can be split across
+sessions: rows save after every run and the runner resumes. The Ollama server
+must outlive the run (§9.2 incident).
+
+Order: spotlighting and repeat first (no new dependencies), then tool_filter,
+then the PI detector once the model download is approved.
+
+### 15.3 What will be compared, fixed now
+
+For each baseline and suite, on the held-out runs: ASR, utility under attack
+and clean utility. Each is compared paired with exact McNemar, as in §10–14,
+against
+
+1. **Condition A** — the rows in the all-tasks A file, filtered to held-out
+   (A was never run with `--tasks heldout`, which is why the A dry run shows
+   80/66 runs still to go);
+2. **B revision 1** — the main ensemble number, chosen before any held-out
+   data was seen (banking `_heldout_rev1`; Slack `_rev1`, filtered to
+   held-out);
+3. **B revision 3** — reported too, still labelled **post hoc** (§14).
+
+Fail-open/degradation flags apply as before. A baseline has no fail-open path
+of its own, apart from a filter reply that keeps no tools, which leaves an
+agent with nothing it can call. That count goes in the report. A baseline is
+never tuned: AgentDojo's prompts, threshold and filter rule stay as shipped.

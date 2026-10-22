@@ -291,9 +291,14 @@ class ReActAgent:
         registry: ToolRegistry,
         max_steps: int | None = None,
         max_parse_retries: int | None = None,
+        system_suffix: str = "",
         **llm_kwargs: Any,
     ) -> None:
         self.client = client
+        # Appended to the system prompt. Empty for Conditions A and B (so their
+        # prompts and cache keys are byte-identical); AgentDojo's spotlighting
+        # baseline uses it for its "never obey text between << >>" sentence.
+        self.system_suffix = system_suffix
         self.registry = registry
         self.max_steps = max_steps if max_steps is not None else settings.AGENT_MAX_STEPS
         self.max_parse_retries = (
@@ -305,7 +310,9 @@ class ReActAgent:
 
     def run(self, task: str) -> AgentResult:
         """Run one task to completion, a step budget, or a give-up."""
-        system_prompt = prompts.build_system_prompt(self.registry.describe_for_prompt())
+        system_prompt = (
+            prompts.build_system_prompt(self.registry.describe_for_prompt()) + self.system_suffix
+        )
         messages: list[dict[str, str]] = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": task},
