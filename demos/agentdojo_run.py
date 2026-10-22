@@ -2,6 +2,10 @@
 
     python demos/agentdojo_run.py --suite banking --condition A --dry-run
     python demos/agentdojo_run.py --suite banking --condition A
+    python demos/agentdojo_run.py --suite slack --condition spotlighting_with_delimiting --tasks heldout
+
+Besides A and B, --condition takes any of AgentDojo's own defenses
+(src/agentdojo_bridge.py BASELINES): Condition A's loop with that one defense.
 
 One row per run, saved after every run so an interrupted job resumes where it
 stopped. Per user task: one clean run (utility), then one run per injection
@@ -35,7 +39,7 @@ from agentdojo.task_suite.load_suites import get_suites  # noqa: E402
 
 from config import settings  # noqa: E402
 from src.agent.loop import AgentResult  # noqa: E402
-from src.agentdojo_bridge import SPLITS, GuardedPipeline  # noqa: E402
+from src.agentdojo_bridge import BASELINES, SPLITS, BaselineRunner, GuardedPipeline  # noqa: E402
 from src.llm.client import LLMClient  # noqa: E402
 from src.pipeline.condition_a import ConditionA  # noqa: E402
 from src.pipeline.condition_b import ConditionB  # noqa: E402
@@ -47,6 +51,10 @@ MAX_STEPS = 15
 # Measured on our own frozen suite, qwen2.5:3b (spike 5); AgentDojo tasks are
 # longer, so these are floors.
 CALLS_PER_RUN = {"A": 3.4, "B": 17.5}
+# Model calls a baseline adds per run over Condition A (tool_filter: the
+# filtering call). The PI detector adds a CPU classifier pass per tool output,
+# not a model call, and is not in this estimate.
+BASELINE_EXTRA_CALLS = {"tool_filter": 1}
 # Re-measured 2026-10-04 with OLLAMA_CONTEXT_LENGTH=24576, short prompt.
 SECONDS_PER_CALL = 7.2
 # Ollama's 500 when the model loops on its own tokens (seen on user_task_14).
@@ -84,6 +92,26 @@ def results_path(suite: str, condition: str, model: str, attack: str, tag: str =
     directory.mkdir(parents=True, exist_ok=True)
     suffix = f"_{tag}" if tag else ""
     return directory / f"{suite}_{condition}_{slug}_{attack}{suffix}.json"
+
+
+def measured_a(suite: str, model: str, attack: str, plan) -> tuple[float, float] | None:
+    """(model calls per run, seconds per uncached call) from Condition A's own
+    rows on exactly these runs, or None if A has not run them.
+
+    Seconds are wall time over UNCACHED calls: a baseline changes the prompt,
+    so almost none of its calls will hit A's cache.
+    """
+    path = results_path(suite, "A", model, attack)
+    if not path.exists():
+        return None
+    want = {(ut.ID, it.ID if it else None) for ut, it in plan}
+    rows = [r for r in json.loads(path.read_text(encoding="utf-8"))
+            if (r["user_task"], r["injection_task"]) in want]
+    uncached = sum(r["num_llm_calls"] - r["num_cache_hits"] for r in rows)
+    if not rows or not uncached:
+        return None
+    return (sum(r["num_llm_calls"] for r in rows) / len(rows),
+            sum(r["wall_ms"] for r in rows) / 1000 / uncached)
 
 
 def fail_open(result) -> dict[str, bool]:
@@ -125,6 +153,9 @@ def summarise(rows: list[dict], floor: tuple[int, int]) -> None:
     print(f"  payload never seen      {len(attacked) - len(seen):>8}")
     print(f"  step budget exhausted   {sum(r['stop_reason'] == 'max_steps' for r in rows):>8}")
     print(f"  degenerate output       {sum(r['stop_reason'] == 'degenerate_output' for r in rows):>8}")
+    no_tools = sum(r.get("agentdojo_defense", {}).get("tools_kept") == [] for r in rows)
+    if no_tools:
+        print(f"  tool_filter kept no tools {no_tools:>8}/{len(rows)}")
     for module in ("harm_gate", "planner", "misalignment", "firewall_guard"):
         bad = sum(r.get("failed_open", {}).get(module, False) for r in rows)
         if bad:
@@ -140,7 +171,7 @@ def summarise(rows: list[dict], floor: tuple[int, int]) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--suite", default="banking")
-    ap.add_argument("--condition", choices=["A", "B"], default="A")
+    ap.add_argument("--condition", choices=["A", "B", *BASELINES], default="A")
     ap.add_argument("--model", default=settings.LOCAL_BACKBONE_MODEL)
     ap.add_argument("--attack", default="important_instructions")
     ap.add_argument("--limit", type=int, default=None, help="stop after N new runs")
@@ -171,8 +202,12 @@ def main() -> None:
     plan = [(ut, None) for ut in users] + [
         (ut, it) for ut in users for it in suite.injection_tasks.values()
     ]
+    baseline = args.condition in BASELINES
+    if baseline and args.planner_model:
+        sys.exit("--planner-model is Condition B only")
     settings.DEFENSE_REVISION = args.defense_revision
-    rev = f"rev{args.defense_revision}" if args.defense_revision else ""
+    # Our defense revisions do not apply to AgentDojo's defenses.
+    rev = f"rev{args.defense_revision}" if args.defense_revision and not baseline else ""
     plan_tag = f"plan-{args.planner_model.replace('/', '-').replace(':', '-')}" if args.planner_model else ""
     tag = "_".join(t for t in (args.tasks if args.tasks != "all" else "", rev, plan_tag, args.tag) if t)
     path = results_path(args.suite, args.condition, args.model, args.attack, tag)
@@ -181,13 +216,21 @@ def main() -> None:
     todo = [(ut, it) for ut, it in plan if (ut.ID, it.ID if it else None) not in done]
     floor = do_nothing_floor(suite)
 
-    calls = len(todo) * CALLS_PER_RUN[args.condition]
+    calls = len(todo) * CALLS_PER_RUN.get(args.condition, CALLS_PER_RUN["A"])
     print(f"AgentDojo {BENCHMARK_VERSION} / {args.suite} / Condition {args.condition} / "
           f"{args.model} / {args.attack}")
     print(f"  {len(plan)} runs ({len(users)} clean + {len(plan) - len(users)} "
           f"attacked), {len(done)} done, {len(todo)} to go")
     print(f"  estimate: >= {calls:.0f} model calls, >= {calls * SECONDS_PER_CALL / 3600:.1f} h "
           f"at {SECONDS_PER_CALL}s/call (local)")
+    measured = measured_a(args.suite, args.model, args.attack, todo)
+    if measured:
+        per_run, per_call = measured
+        if args.condition in ("A", *BASELINES):
+            per_run += BASELINE_EXTRA_CALLS.get(args.condition, 0)
+            print(f"  measured: {len(todo) * per_run:.0f} model calls, "
+                  f"~{len(todo) * per_run * per_call / 3600:.1f} h uncached "
+                  f"({per_run:.2f} calls/run, {per_call:.1f}s/call from Condition A on these runs)")
     print(f"  results : {path}")
     if args.dry_run:
         summarise(rows, floor) if rows else None
@@ -195,6 +238,8 @@ def main() -> None:
 
     with LLMClient() as client:
         def make_runner(registry):
+            if baseline:
+                return BaselineRunner(client, registry, args.condition, args.model, MAX_STEPS)
             cls = ConditionA if args.condition == "A" else ConditionB
             if args.condition == "A":
                 return cls(client, registry=registry, model=args.model, max_steps=MAX_STEPS)
@@ -231,10 +276,12 @@ def main() -> None:
                 "final_answer": result.final_answer,
                 "failed_open": fail_open(result),
                 "backbone_model": args.model,
-                "defense_revision": args.defense_revision,
+                "defense_revision": None if baseline else args.defense_revision,
                 "planner_model": args.planner_model,
                 "benchmark_version": BENCHMARK_VERSION,
             })
+            if baseline:
+                rows[-1]["agentdojo_defense"] = {"name": args.condition, **pipeline.last_runner.notes}
             path.write_text(json.dumps(rows, indent=1), encoding="utf-8")
             tag = f"{ut.ID} x {it.ID}" if it else f"{ut.ID} (clean)"
             sec = "" if it is None else f" attack={'HIT' if security else 'miss'}" + (
