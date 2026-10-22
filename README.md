@@ -791,3 +791,9 @@ written against.
 
 External benchmark: [AgentDojo](https://github.com/ethz-spylab/agentdojo)
 (Debenedetti et al., NeurIPS 2024 Datasets & Benchmarks).
+
+---
+
+## License
+
+[MIT](LICENSE)
