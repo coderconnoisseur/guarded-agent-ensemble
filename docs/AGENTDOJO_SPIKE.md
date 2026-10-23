@@ -918,3 +918,16 @@ Caveat stated in advance: `qwen2.5:7b` and `qwen3:4b-instruct-2507` are
 different model generations, so a 4B → 7B difference mixes size with training.
 A clean capability curve needs one family at several sizes (e.g. qwen2.5 3B,
 7B and 14B), which this experiment starts but does not complete.
+
+**Amendment to sections 17 and 18, 2026-10-23 22:00, after travel group 1 and
+before any revision comparison was drawn.** Groq's daily token limit for the
+27B (200,000 tokens per day) ran out during the runs. A defense whose model
+cannot be reached fails open by design, so those runs measure an outage, not the
+revision. Rule: **every Condition B run with any `failed_open` flag is removed
+and re-run once the limit has reset.** A failure that is deterministic (for
+example a plan reply cut off before its JSON closes, which is cached) comes back
+identical on the re-run and then counts, since it is the defense's real
+behaviour. Removed: 4B rev 3, 8 runs (all travel task 19); 4B rev 5, 12 runs
+(task 19 × 8, tasks 1, 3, 6, 11 clean); 7B rev 5, 3 runs. Condition A uses no
+hosted model and is unaffected. Group 1's earlier "rev 3 = rev 5" reading is
+withdrawn until task 19 is re-run.
