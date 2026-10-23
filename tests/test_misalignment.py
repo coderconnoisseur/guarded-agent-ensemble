@@ -1135,3 +1135,23 @@ class TestDefenseRevision:
         assert "say nothing about whether" not in inference
         assert "ignore anything" not in verification
         assert "points to" not in verification
+
+
+class TestRevision4:
+    def _verification(self, monkeypatch, revision):
+        monkeypatch.setattr(settings, "DEFENSE_REVISION", revision)
+        client = scripted("checking transactions, then changing the password",
+                          "VERDICT: aligned | WHY: ok")
+        MisalignmentCheckpoint(client=client).check(
+            "If anything looks suspicious, update the password", TRAJECTORY,
+            "files.delete", {"path": "x"})
+        return client.prompts[1]
+
+    def test_revision_4_leaves_delegated_judgements_to_the_assistant(self, monkeypatch):
+        verification = self._verification(monkeypatch, 4)
+        assert "leave a judgement or a lookup to the assistant" in verification
+        assert "ignore anything" in verification, "keeps the revision 1 caveat"
+        assert "web page or website" in verification, "keeps the revision 2 rule"
+
+    def test_revision_3_prompt_is_unchanged(self, monkeypatch):
+        assert "leave a judgement" not in self._verification(monkeypatch, 3)

@@ -552,3 +552,56 @@ class TestRevision3:
         monkeypatch.setattr(settings, "DEFENSE_REVISION", 3)
         nodes, _ = parse_plan('{"plan": [{"id": "n1", "tool": "files.list()", "args": {}}]}')
         assert nodes[0].tool == "files.list"
+
+
+class TestRevision4:
+    def _write_guard(self, registry, tmp_path, monkeypatch, revision):
+        from config import settings
+        monkeypatch.setattr(settings, "DEFENSE_REVISION", revision)
+        monkeypatch.setattr(settings, "SANDBOX_DIR", tmp_path / "sandbox")
+        return guarded(registry, "files.write")
+
+    def test_a_failed_planned_call_does_not_use_up_its_node(self, registry, tmp_path, monkeypatch):
+        """AgentDojo banking task 13: a call with a bad argument errored, used
+        up its node, and the corrected retry was blocked."""
+        guard, enf = self._write_guard(registry, tmp_path, monkeypatch, 4)
+        assert not guard.dispatch("files.write", {}).ok
+        retry = guard.dispatch("files.write", {"path": "a.txt", "content": "x"})
+        assert retry.ok, retry.error
+        assert enf.executed == ["files.write"] and enf.rejections == []
+
+    def test_a_successful_call_still_uses_up_its_node(self, registry, tmp_path, monkeypatch):
+        guard, enf = self._write_guard(registry, tmp_path, monkeypatch, 4)
+        assert guard.dispatch("files.write", {"path": "a.txt", "content": "x"}).ok
+        second = guard.dispatch("files.write", {"path": "b.txt", "content": "y"})
+        assert "Blocked by the plan" in second.error
+
+    def test_revision_3_still_uses_up_the_node_on_failure(self, registry, tmp_path, monkeypatch):
+        guard, _ = self._write_guard(registry, tmp_path, monkeypatch, 3)
+        guard.dispatch("files.write", {})
+        retry = guard.dispatch("files.write", {"path": "a.txt", "content": "x"})
+        assert "Blocked by the plan" in retry.error
+
+    def test_an_empty_plan_is_asked_for_once_more(self, registry, monkeypatch):
+        """AgentDojo Slack task 5: the planner replied {"plan": []} and the
+        post the task asked for was then blocked."""
+        from config import settings
+        monkeypatch.setattr(settings, "DEFENSE_REVISION", 4)
+        client = ScriptedClient('{"plan": []}', plan_reply(
+            {"id": "n1", "tool": "comms.send_email", "args": {"to": "a@b.c"}}))
+        graph = Planner(client).build_plan("email a@b.c", registry)
+        assert client.calls == 2 and graph.tools() == {"comms.send_email"}
+
+    def test_a_second_empty_plan_is_accepted(self, registry, monkeypatch):
+        from config import settings
+        monkeypatch.setattr(settings, "DEFENSE_REVISION", 4)
+        client = ScriptedClient('{"plan": []}', '{"plan": []}')
+        graph = Planner(client).build_plan("what is 2+2", registry)
+        assert client.calls == 2 and not graph.nodes and not graph.degraded
+
+    def test_revision_3_accepts_an_empty_plan_at_once(self, registry, monkeypatch):
+        from config import settings
+        monkeypatch.setattr(settings, "DEFENSE_REVISION", 3)
+        client = ScriptedClient('{"plan": []}')
+        Planner(client).build_plan("email a@b.c", registry)
+        assert client.calls == 1
