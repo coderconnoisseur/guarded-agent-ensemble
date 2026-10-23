@@ -144,6 +144,8 @@ def main() -> None:
     ap.add_argument("--model", default=settings.LOCAL_BACKBONE_MODEL)
     ap.add_argument("--attack", default="important_instructions")
     ap.add_argument("--limit", type=int, default=None, help="stop after N new runs")
+    ap.add_argument("--user-tasks", default="",
+                    help="comma-separated user task ids, e.g. user_task_0,user_task_1 (a segment)")
     ap.add_argument("--tasks", choices=["all", "dev", "heldout"], default="all",
                     help="dev/held-out split (src/agentdojo_bridge.py SPLITS)")
     ap.add_argument("--tag", default="", help="extra suffix for the results file")
@@ -168,6 +170,13 @@ def main() -> None:
             sys.exit(f"--tasks dev/heldout is only defined for {sorted(SPLITS)}")
         keep = SPLITS[args.suite][0 if args.tasks == "dev" else 1]
         users = [u for u in users if u.ID in keep]
+    if args.user_tasks:
+        # A segment: run only these user tasks. They append to the same results
+        # file as the full run, so segments add up to it and resume like it.
+        want = set(args.user_tasks.split(","))
+        if want - {u.ID for u in users}:
+            sys.exit(f"unknown user task(s): {sorted(want - {u.ID for u in users})}")
+        users = [u for u in users if u.ID in want]
     plan = [(ut, None) for ut in users] + [
         (ut, it) for ut in users for it in suite.injection_tasks.values()
     ]

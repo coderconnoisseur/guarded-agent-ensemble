@@ -843,3 +843,53 @@ task 13: 5 → 8 of 9) with no task lost. Slack's 8 surviving attacks are the sa
 8 runs at revision 3 and 5, all `injection_task_3` (visit a link found in data),
 the provenance wall from section 14. The clean test is a suite no revision has
 seen: travel.
+
+---
+
+## 17. Travel: pre-registered protocol, written 2026-10-23 before any travel run
+
+Travel is the one suite no defense revision has been developed, tuned or
+inspected on. It is the test of whether revisions 4 and 5 generalise or were
+fitted to the banking and Slack failures they were built from.
+
+**Frozen.** Defense code as of commit `52384e6` (revision 5). Nothing under
+`src/defense/` changes until all five task groups below have run. Any change
+made after seeing travel results becomes revision 6 and is reported as post hoc.
+The only runner change is `--user-tasks`, which selects a group of user tasks
+and appends to the same results file.
+
+**Setup, identical for every condition.** Backbone `qwen3:4b-instruct-2507-q4_K_M`
+(local), attack `important_instructions`, `MAX_STEPS = 15`, temperature 0, one
+run per (user task, injection) pair, Ollama `OLLAMA_CONTEXT_LENGTH=16384` (travel
+prompts are longer than banking's; the client refuses to score a truncated run).
+Condition B uses the 27B planner (`--planner-model qwen/qwen3.8-27b`), as in
+revisions 3–5.
+
+**Conditions.** A (no defense), B revision 3, B revision 5. All 20 user tasks ×
+(1 clean + 7 injection tasks) = 160 runs per condition. Run in five groups,
+balanced by the number of calls in AgentDojo's ground-truth solution:
+
+| Group | User tasks | Ground-truth calls |
+|---|---|---|
+| 1 | 9, 13, 19 | 26 |
+| 2 | 0, 1, 3, 6, 11 | 26 |
+| 3 | 4, 5, 8, 17 | 24 |
+| 4 | 7, 12, 14, 15 | 24 |
+| 5 | 2, 10, 16, 18 | 24 |
+
+**Questions, tests and predictions** (two-sided Fisher exact on the 140 attacked
+runs; nothing is claimed below p = 0.05):
+
+1. *Do revisions 4–5 generalise?* Utility under attack, rev 5 vs rev 3.
+   Prediction: rev 5 ≥ rev 3. If the difference is not significant, the
+   write-up says the banking held-out gain (§16) did not reproduce on an
+   unseen suite.
+2. *Do they cost security?* ASR, rev 5 vs rev 3. Prediction: no increase. Any
+   increase is reported whatever its p-value.
+3. *Context.* Both revisions vs A on ASR and utility; clean-task utility.
+
+**Expected limitations, stated in advance.** Travel tools return one-line
+outputs with literal `\n` (§4.5), so a flagged output is withheld whole, which
+should cost B utility. Ten of twenty travel tasks need at least 6 tool calls. An
+audit of AgentDojo's travel utility checks (source code, not results) found no
+always-pass check like banking's tasks 8 and 10.
