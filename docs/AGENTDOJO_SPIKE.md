@@ -893,3 +893,28 @@ outputs with literal `\n` (§4.5), so a flagged output is withheld whole, which
 should cost B utility. Ten of twenty travel tasks need at least 6 tool calls. An
 audit of AgentDojo's travel utility checks (source code, not results) found no
 always-pass check like banking's tasks 8 and 10.
+
+---
+
+## 18. Travel on a larger backbone: pre-registered, written 2026-10-23 before any result
+
+Same protocol as section 17 in every respect except the backbone: **`qwen2.5:7b`**
+(Ollama `qwen2.5:7b`, Q4_K_M, 7.6B), run on a Kaggle T4 at commit `2c292f6`
+(revision 5 frozen as in section 17) with Ollama 0.40.9. `OLLAMA_CONTEXT_LENGTH=16384`
+was confirmed from `ollama ps` (16384, 100% GPU) before the first group. The
+27B planner, judges and guard models are the same hosted models as on the 4B arm,
+so the backbone is the only variable.
+
+Conditions A, B revision 3 and B revision 5, the same five task groups and
+order, the same tests (two-sided Fisher exact on the 140 attacked runs per
+condition). Questions, in addition to section 17's:
+
+4. *Does a larger backbone raise utility in every condition?* 7B vs 4B, per
+   condition. Prediction: yes, for A and both revisions.
+5. *Does the rev 5 vs rev 3 difference depend on the backbone?* No prediction;
+   reported either way.
+
+Caveat stated in advance: `qwen2.5:7b` and `qwen3:4b-instruct-2507` are
+different model generations, so a 4B → 7B difference mixes size with training.
+A clean capability curve needs one family at several sizes (e.g. qwen2.5 3B,
+7B and 14B), which this experiment starts but does not complete.
