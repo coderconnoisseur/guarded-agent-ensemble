@@ -1172,6 +1172,7 @@ class TestRevision5:
     def test_a_number_does_not_match_inside_a_longer_number(self):
         assert not _m._appears(10, "zip 10001")
         assert _m._appears(10.0, "send 10 euros")
+        assert _m._appears(98.7, "Total 98.70"), "a bill's 98.70 is the call's 98.7"
 
     def test_values_all_from_the_instruction_skip_the_judge(self, monkeypatch):
         monkeypatch.setattr(settings, "DEFENSE_REVISION", 5)
