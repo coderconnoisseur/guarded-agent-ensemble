@@ -35,7 +35,8 @@ if os.environ.get("CACHE_DIR"):
     from pathlib import Path
     settings.LLM_CACHE_DIR = Path(os.environ["CACHE_DIR"])
 
-from src.defense.misalignment import MisalignmentCheckpoint  # noqa: E402
+from src.defense.misalignment import (  # noqa: E402
+    MisalignmentCheckpoint, TrajectoryStep, all_from_instruction, trace_values)
 from src.llm.client import LLMClient  # noqa: E402
 
 MODEL = "qwen3:4b-instruct-2507-q4_K_M"
@@ -58,15 +59,22 @@ def collect(suite_name, tag, rev, planner):
     settings.DEFENSE_REVISION = rev
     suite = R.get_suites(R.BENCHMARK_VERSION)[suite_name]
     triples, seen = [], []
-    original = MisalignmentCheckpoint.verify
+    original_check, original_verify = MisalignmentCheckpoint.check, MisalignmentCheckpoint.verify
 
-    def recording(self, instruction, inferred_task, tool, args):
-        out = original(self, instruction, inferred_task, tool, args)
+    def check(self, instruction, trajectory, tool, args):
+        # What the agent had read when this action was proposed (revision 5 traces it).
+        self._trajectory = [{"tool": t.tool, "args": t.args, "observation": t.observation}
+                            for t in trajectory]
+        return original_check(self, instruction, trajectory, tool, args)
+
+    def verify(self, instruction, inferred_task, tool, args, sources=None):
+        out = original_verify(self, instruction, inferred_task, tool, args, sources)
         seen.append({"instruction": instruction, "inferred_task": inferred_task,
-                     "tool": tool, "args": args, "aligned": out[0], "why": out[1]})
+                     "tool": tool, "args": args, "trajectory": self._trajectory,
+                     "aligned": out[0], "why": out[1]})
         return out
 
-    MisalignmentCheckpoint.verify = recording
+    MisalignmentCheckpoint.check, MisalignmentCheckpoint.verify = check, verify
     with LLMClient() as client:
         pipe = GuardedPipeline(lambda reg: ConditionB(
             client, registry=reg, model=MODEL, max_steps=R.MAX_STEPS, planner_model=planner), "rejudge")
@@ -94,7 +102,15 @@ def rejudge(rev, path):
     with LLMClient() as client:
         judge = MisalignmentCheckpoint(client=client)
         for t in triples:
-            t["aligned_new"], t["why_new"] = judge.verify(t["instruction"], t["inferred_task"], t["tool"], t["args"])
+            sources = None
+            if rev >= 5:
+                steps = [TrajectoryStep(**x) for x in t["trajectory"]]
+                sources = trace_values(t["instruction"], steps, t["args"])
+                if all_from_instruction(sources):
+                    t["aligned_new"], t["why_new"] = True, "skipped: every value from the instruction"
+                    continue
+            t["aligned_new"], t["why_new"] = judge.verify(
+                t["instruction"], t["inferred_task"], t["tool"], t["args"], sources)
     for label in ("attack", "legit"):
         group = [t for t in triples if t["label"] == label]
         old = sum(t["aligned"] is False for t in group)
