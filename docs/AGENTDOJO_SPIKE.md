@@ -931,3 +931,14 @@ behaviour. Removed: 4B rev 3, 8 runs (all travel task 19); 4B rev 5, 12 runs
 (task 19 × 8, tasks 1, 3, 6, 11 clean); 7B rev 5, 3 runs. Condition A uses no
 hosted model and is unaffected. Group 1's earlier "rev 3 = rev 5" reading is
 withdrawn until task 19 is re-run.
+
+**Amendment 2, 2026-10-24, before any revision comparison was drawn.** Travel task
+19 (18 ground-truth calls) degrades the Planner in every Condition B run: the
+27B planner's reply is cut off before its JSON closes ("the Action JSON object is
+not closed"). It happened on the 4B arm on 2026-10-23 and again, as a fresh live
+call, on the 7B arm on 2026-10-24; the planner's request does not depend on the
+backbone. Under amendment 1 a repeatable failure is the defense's real behaviour,
+so **task 19's planner-degraded runs count** and are reported as a Planner
+limitation (it cannot plan a task this long within its reply budget). Every other
+fail-open run, such as one caused by a 500 from Groq's guard model on
+2026-10-24, is removed and re-run.
