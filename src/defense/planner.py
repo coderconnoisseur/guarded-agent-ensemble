@@ -209,6 +209,15 @@ Reply again with a corrected JSON object in the same format, and nothing else.
 """
 
 
+EMPTY_PLAN_PROBLEM = (
+    "The plan is empty, so nothing that sends, posts, writes, pays or changes "
+    "anything will be allowed. If the task asks for any such action, include "
+    "that step, writing \"<from nX>\" for any value an earlier step has to find "
+    "(for example which channel or recipient). If the task really needs no "
+    "tools, reply {\"plan\": []} again."
+)
+
+
 #: Tool names that mean "stop", not "call something". Matched
 #: case-insensitively. These are what small models emit for a terminal node.
 _SENTINEL_TOOLS = {"none", "null", "n/a", "na", "stop", "end", "done", "finish"}
@@ -381,6 +390,16 @@ class Planner:
             # tools, which a test caught immediately.
             if not problems and not nodes and pruned:
                 problems = ["every step named a tool that does not exist"]
+            # Revision 4: ask once more before accepting an empty plan. Measured
+            # on AgentDojo Slack task 5 ("find the channel with the most users and
+            # post there ..."): the planner replied {"plan": []} in all 5 lost
+            # held-out runs - it could not name the channel at plan time - and
+            # the post was then blocked. The plan is still made before any
+            # untrusted data is read, so asking again widens nothing an attacker
+            # controls. A second empty plan is accepted: some tasks need no tools.
+            if (settings.DEFENSE_REVISION >= 4 and not problems and not nodes
+                    and not pruned and attempt == 0):
+                problems = [EMPTY_PLAN_PROBLEM]
             if not problems:
                 graph = ToolDependencyGraph(
                     nodes=nodes, raw=response.content, pruned=pruned
@@ -511,9 +530,20 @@ class PlanEnforcingRegistry:
         if node is not None:
             # Argument Estimation: the plan committed to the tool, not to
             # argument values it could not know at plan time.
-            node.executed = True
-            self.enforcement.executed.append(name)
-            return self._inner.dispatch(name, args)
+            if settings.DEFENSE_REVISION < 4:
+                node.executed = True
+                self.enforcement.executed.append(name)
+                return self._inner.dispatch(name, args)
+            # Revision 4: a call that failed changed nothing, so it must not
+            # use up its node. Measured on AgentDojo banking task 13 (2 of 11
+            # held-out losses): update_user_info with an unsupported `country`
+            # argument errored, consumed the node, and the corrected retry was
+            # blocked as "not in the agreed plan".
+            result = self._inner.dispatch(name, args)
+            if result.ok:
+                node.executed = True
+                self.enforcement.executed.append(name)
+            return result
 
         # Revision 2 only. Revision 3 drops it: on Slack held-out it caused 9 of
         # the 10 runs revision 2 lost (legitimate links found in messages), and
