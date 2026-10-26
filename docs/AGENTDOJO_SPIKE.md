@@ -1008,3 +1008,15 @@ re-run, and repeatable defense failures count.
 2. ASR, rev 5 vs rev 3 on each split. Prediction: no increase.
 3. Context: each revision vs A; 7B vs 4B per condition (different model
    generations, so not a size effect).
+
+**Amendment, 2026-10-27: first attempt lost, re-run from scratch.** The first run
+(Kaggle, 2026-10-26/27) stopped partway through Slack dev rev 5 when Groq's daily
+token limit ran out. The idle Kaggle session then shut down before its files were
+downloaded, and every result file and the LLM cache were deleted. While monitoring,
+I saw only run counts, attack-success counts and fail-open counts; utility was never
+computed. The attack counts were: banking held-out A 27/72, rev 5 0, rev 3 0;
+Slack held-out A 23/55, rev 5 4, rev 3 4; banking dev A 21, rev 5 0, rev 3 1. The
+rev 3 dev attack came from a run that failed open, and fail-open runs are re-run.
+Test 1 (utility) is therefore still untouched. The whole protocol above is re-run
+unchanged from scratch, and only the re-run's files are analysed. Results are
+downloaded after each group.
