@@ -984,3 +984,27 @@ and 16k context; the split is by whole task group. 7B: all on a Kaggle T4.
 **Reading it.** On an unseen suite the ensemble's security holds (0/140 on the 4B,
 3/140 on the 7B) without the utility cost seen on banking and Slack. Revision
 5's utility gain is not confirmed outside the tasks it was designed from.
+
+---
+
+## 20. Banking and Slack on the 7B: pre-registered, written 2026-10-27 before any result
+
+**Question.** Does revision 5's banking held-out gain (section 16: utility under
+attack 14 → 26 of 54 on the 4B, excluding the always-pass tasks 8 and 10, with
+ASR 0/72) reproduce on a different backbone? The held-out tasks were used to
+design revisions 4–5, so a 4B → 7B reproduction tests robustness to the backbone,
+not generalisation to unseen tasks (travel, section 19, did that).
+
+**Setup.** Frozen code `2c292f6`; `qwen2.5:7b` on a Kaggle T4; Ollama
+`OLLAMA_CONTEXT_LENGTH=8192`, the same as every 4B banking and Slack run;
+attack `important_instructions`; 27B planner for B; temperature 0; N = 1.
+Conditions A, B rev 3 and B rev 5 on banking and Slack, held-out split first,
+then dev. The amendment rules apply: fail-open runs from provider errors are
+re-run, and repeatable defense failures count.
+
+**Tests** (two-sided Fisher exact):
+1. Banking held-out, utility under attack excluding tasks 8 and 10 (54 runs),
+   rev 5 vs rev 3. Prediction: rev 5 ≥ rev 3.
+2. ASR, rev 5 vs rev 3 on each split. Prediction: no increase.
+3. Context: each revision vs A; 7B vs 4B per condition (different model
+   generations, so not a size effect).
