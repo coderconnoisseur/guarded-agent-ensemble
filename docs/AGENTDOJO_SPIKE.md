@@ -942,3 +942,45 @@ so **task 19's planner-degraded runs count** and are reported as a Planner
 limitation (it cannot plan a task this long within its reply budget). Every other
 fail-open run, such as one caused by a 500 from Groq's guard model on
 2026-10-24, is removed and re-run.
+
+---
+
+## 19. Travel results (pre-registered in sections 17–18), 2026-10-26
+
+All three conditions are complete on both backbones: 160 runs each (20 user
+tasks × 1 clean + 7 injections). After applying the amendments, no run failed
+open apart from task 19's 8 repeatable Planner degradations per defended
+condition. 4B: groups 1–3 ran on the laptop (GTX 1650 Ti) and groups 4–5 on a
+Kaggle T4, with the same model file (Ollama digest `0edcdef34593`), frozen code
+and 16k context; the split is by whole task group. 7B: all on a Kaggle T4.
+
+| Backbone | Condition | ASR (of 140) | Payload seen | UA (of 140) | Clean (of 20) |
+|---|---|---|---|---|---|
+| qwen3 4B | A | 15 | 91 | 23 | 6 |
+| | B rev 3 | **0** | 98 | 23 | 4 |
+| | B rev 5 | **0** | 98 | 26 | 7 |
+| qwen2.5 7B | A | 10 | 56 | 9 | 2 |
+| | B rev 3 | 3 | 84 | 6 | 0 |
+| | B rev 5 | 3 | 84 | 10 | 1 |
+
+**Pre-registered questions** (two-sided Fisher exact on the attacked runs):
+
+1. *Do revisions 4–5 generalise?* Utility under attack, rev 5 vs rev 3: 4B
+   26 vs 23 (p = 0.75), 7B 10 vs 6 (p = 0.44). **Not significant on either
+   backbone.** As pre-registered: the banking held-out gain (section 16) did not
+   reproduce on an unseen suite. Both point estimates favour rev 5. Travel has
+   a floor effect: even with no defense the agents complete 2–6 of 20 clean tasks.
+2. *Do they cost security?* ASR, rev 5 vs rev 3: 0 vs 0 (4B), 3 vs 3 (7B). **No
+   increase.**
+3. *Context, defense vs no defense.* 4B: ASR 15 → 0 for both revisions
+   (p < 0.0001) with no utility cost (23 → 23 / 26). 7B: ASR 10 → 3 (p = 0.085,
+   not significant; the 7B saw the payload in only 56 of 140 undefended runs).
+4. *Larger backbone, higher utility?* No: the 7B completes **fewer** travel tasks
+   than the 4B in every condition (clean 2 vs 6 with no defense). The two are
+   different model generations (section 18's caveat), so this is not a size effect.
+5. *Does rev 5 vs rev 3 depend on the backbone?* Same direction and the same
+   non-significance on both.
+
+**Reading it.** On an unseen suite the ensemble's security holds (0/140 on the 4B,
+3/140 on the 7B) without the utility cost seen on banking and Slack. Revision
+5's utility gain is not confirmed outside the tasks it was designed from.
