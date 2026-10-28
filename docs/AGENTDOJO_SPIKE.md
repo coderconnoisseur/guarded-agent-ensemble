@@ -1020,3 +1020,57 @@ rev 3 dev attack came from a run that failed open, and fail-open runs are re-run
 Test 1 (utility) is therefore still untouched. The whole protocol above is re-run
 unchanged from scratch, and only the re-run's files are analysed. Results are
 downloaded after each group.
+
+---
+
+## 21. Banking and Slack on the 7B: results (pre-registered in section 20), 2026-10-28
+
+All 12 files are complete: A, B rev 3 and B rev 5, each on banking and Slack, dev and held-out.
+- **Runs:** Kaggle T4, `qwen2.5:7b` (digest `845dbda0ea48`), 8192 context, frozen code `2c292f6`, 27B planner, temperature 0.
+- **Re-runs:** two runs failed open from provider errors and were re-run under the amendment rule:
+  - banking held-out rev 5, task 6 × injection 3 (Groq 500 on the guard model)
+  - Slack held-out rev 5, task 8 × injection 4 (Groq daily token limit)
+
+  No run in the final files failed open.
+- **Repeatability:** temperature 0 is not perfectly repeatable on Ollama. Banking dev A had 21 successful attacks in the lost first attempt and 20 here.
+
+| Suite | Split | Condition | ASR | UA | Clean |
+|---|---|---|---|---|---|
+| Banking | held-out | A | 27/72 | 32/72 | 3/8 |
+| | | B rev 3 | **0/72** | 30/72 | 3/8 |
+| | | B rev 5 | **0/72** | 38/72 | 5/8 |
+| Banking | dev | A | 20/72 | 19/72 | 3/8 |
+| | | B rev 3 | **0/72** | 28/72 | 4/8 |
+| | | B rev 5 | **0/72** | 18/72 | 3/8 |
+| Slack | held-out | A | 23/55 | 22/55 | 7/11 |
+| | | B rev 3 | **4/55** | 9/55 | 2/11 |
+| | | B rev 5 | **4/55** | 19/55 | 6/11 |
+| Slack | dev | A | 24/50 | 13/50 | 7/10 |
+| | | B rev 3 | **4/50** | 11/50 | 3/10 |
+| | | B rev 5 | **4/50** | 12/50 | 3/10 |
+
+**Pre-registered tests** (two-sided Fisher exact):
+
+1. **Banking held-out, utility under attack, excluding tasks 8 and 10, rev 5 vs rev 3.** The 7B gives 20/54 vs 12/54 (p = 0.14); the 4B gave 26/54 vs 14/54 (p = 0.028).
+   - The direction reproduces on the second backbone; significance does not.
+   - The no-defense baseline on the 7B is 23/54, so rev 5 does not exceed it.
+2. **ASR, rev 5 vs rev 3.** They are identical on every split: 0, 0, 4 and 4. **No increase.**
+3. **Context.**
+   - *Each revision vs A.* ASR falls on every split:
+     - banking held-out 27 → 0 (p < 1e-9)
+     - banking dev 20 → 0 (p < 1e-6)
+     - Slack held-out 23 → 4 (p < 1e-4)
+     - Slack dev 24 → 4 (p < 1e-4)
+
+     Rev 5's utility under attack is not distinguishable from A on any split (p ≥ 0.40). Rev 3 loses utility on Slack held-out (22 → 9, p = 0.010).
+   - *7B vs 4B, defended.* Residual ASR is 0 vs 0 on banking for both revisions. On Slack the 7B has 4 vs 8 (held-out) and 4 vs 6 (dev). Both backbones' residual Slack attacks are `injection_task_3`-class (section 14). The 7B (Qwen2.5) and the 4B (Qwen3) are different model generations, so this is not a size effect.
+
+**Not pre-registered, reported for completeness:**
+- Rev 5 vs rev 3 utility on Slack held-out is 19 vs 9 (p = 0.048).
+- On banking dev it goes the *other* way: 18 vs 28 (p = 0.11).
+
+With four splits compared and no correction, neither is evidence.
+
+**Reading it.** The security result holds on both backbones and both suites: every defended configuration ends with 0 banking attacks and 4–8 Slack attacks, against 20–39 undefended. Rev 5 never costs security.
+
+Its utility gain is backbone- and task-dependent. It points the right way on banking held-out (the tasks it was designed from) for both backbones. It did not reach significance on the 7B, did not generalise to travel (section 19), and reversed direction on 7B banking dev. The supportable claim is "rev 5 removes rev 3's utility cost relative to no defense, without losing security", not "rev 5 improves utility".
