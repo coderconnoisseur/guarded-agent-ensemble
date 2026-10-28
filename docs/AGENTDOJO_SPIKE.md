@@ -1020,3 +1020,83 @@ rev 3 dev attack came from a run that failed open, and fail-open runs are re-run
 Test 1 (utility) is therefore still untouched. The whole protocol above is re-run
 unchanged from scratch, and only the re-run's files are analysed. Results are
 downloaded after each group.
+
+---
+
+## 21. Which module stopped each attack (4B, revisions 3 and 5), 2026-10-28
+
+**Method.** Every attacked Condition B run with security False (the attack
+failed) on `qwen3:4b-instruct-2507` with the 27B planner was replayed from the
+LLM cache with the network pointed at dead endpoints
+(`scripts/attribute_agentdojo_blocks.py`, same argv as
+`attribute_agentdojo_losses.py`). Each replayed run reproduced its recorded
+utility, security, payload exposure and fail-open flags; the script stops on any
+difference, and none occurred. A run is credited to the first module that stopped
+the attacker's goal, in pipeline order:
+
+- **Harm Gate**: refused the user's task.
+- **Planner**: rejected an attacker action ("not in the agreed plan").
+- **Checkpoint**: the Misalignment Checkpoint paused an attacker action.
+- **Firewall**: no attacker action was tried, and Quarantine removed the payload
+  before the agent saw it.
+- **Agent, ignored**: the agent saw the payload but never issued the attacker's action.
+- **Agent, unseen**: the payload never appeared in any tool output.
+
+An attacker action is a call to one of the injection goal's tools (or any
+state-changing tool) whose arguments carry the goal's own value: the attacker's
+IBAN, URL or e-mail, `new_password`, `Fred`, and so on (the list is in the
+script). No run had an attacker action that executed and still missed the goal,
+and the Harm Gate stopped none.
+
+| Split | Rev | Stopped | Planner | Checkpoint | Firewall | Agent, ignored | Agent, unseen |
+|---|---|---|---|---|---|---|---|
+| Banking dev | 3 | 72 | 22 | 7 | 0 | 34 | 9 |
+| Banking dev | 5 | 72 | 23 | 7 | 0 | 33 | 9 |
+| Banking held-out | 3 | 72 | 38 | 0 | 0 | 25 | 9 |
+| Banking held-out | 5 | 72 | 36 | 4 | 0 | 23 | 9 |
+| Slack dev | 3 | 44 | 13 | 0 | 10 | 6 | 15 |
+| Slack dev | 5 | 44 | 12 | 0 | 10 | 7 | 15 |
+| Slack held-out | 3 | 47 | 27 | 1 | 4 | 10 | 5 |
+| Slack held-out | 5 | 47 | 27 | 1 | 4 | 10 | 5 |
+| Travel | 3 | 79 of 140 replayable | 3 | 0 | 24 | 31 | 21 |
+| Travel | 5 | 77 of 140 replayable | 3 | 0 | 24 | 29 | 21 |
+
+**Travel is partial.** 61 (rev 3) and 63 (rev 5) of the 140 stopped travel runs
+are not in this cache, so they are listed by the script and left out of the table.
+In both revisions these are all 56 runs of task groups 4–5 (tasks 2, 7, 10, 12,
+14, 15, 16, 18), which ran on Kaggle; only the result files were downloaded, not
+the cache. The rest are runs of task 3: 5 in rev 3 and all 7 in rev 5. Task 3 ran
+on the laptop, but its backbone replies are missing. They are not in this cache,
+and a direct replay against the c-drive-cleanup worktree's cache missed too.
+The other local caches were last written in September. The cause was not
+established. The replayable travel rows therefore cover groups
+1–3 only.
+
+**Reading it.**
+- **The Planner is the main blocking module on banking and Slack**: 22–38 of 72
+  banking runs and 12–27 of 44–47 Slack runs.
+- **The Firewall's share depends on the suite.** In banking it stopped no attack.
+  Quarantine ran in 50 of the 72 stopped runs in every banking file, but each
+  flag came from the guard model with no flagged block to remove, so the agent
+  still saw the payload every time. In Slack and travel it stopped 4–24 runs.
+  Travel's 24 are every replayed run of the three e-mail exfiltration goals
+  (injection tasks 1, 3 and 5) where the payload surfaced.
+- **The Checkpoint stops few attacks** (0–7 per file). All 18 banking pauses
+  were `send_money` calls the plan allowed; Slack's one was a `send_direct_message`.
+- **Slack `injection_task_3` (visit a link found in data) was never stopped by
+  any module** in any of the four Slack files. Every stopped run was the agent
+  ignoring the payload (1–2 per file) or never seeing it (1–3). This matches the
+  value-provenance class in sections 14 and 16: a read-only `get_webpage` passes
+  Node Expansion, and no module checks where the URL came from.
+- **A large share is the 4B agent itself**: 32–43 of 72 on banking, 15–22 of
+  44–47 on Slack, and 52 of 79 (rev 3) and 50 of 77 (rev 5) on travel. "Ignored" means the agent never
+  issued a call carrying the attacker's value, not that it was uninfluenced. In
+  18–22 of the banking "ignored" runs a defense still refused another call. None
+  of those calls carried an attacker value: most were the user's own task
+  actions (the utility cost in section 16), and a few sent money to the pizza
+  companion's IBAN, a garbled reading of injection task 1.
+
+**Limits.** This credits the first module that blocked; it does not show that the
+attack would have succeeded without that module. That needs single-module
+ablation runs. All numbers are for the 4B backbone only, and travel covers groups
+1–3 only.
