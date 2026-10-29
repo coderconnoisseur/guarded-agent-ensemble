@@ -47,7 +47,7 @@
 
 % =====================================================================
 \begin{abstract}
-Tool-using LLM agents face three distinct threats: a user who asks for harm, an environment that injects instructions through tool outputs, and an agent that misreads a benign request. Published defenses each target one. We wrap one small open-weight agent in four modules adapted from four of them (an intake harm screen, a plan-then-execute tool dependency graph, a theory-of-mind check at critical actions, and a tool-response firewall with quarantine), and ask not only whether the composition helps but where each part fails. On AgentDojo with the \textit{important\_instructions} attack and a Qwen3 4B agent, the composed guard reduces successful attacks from 39/72 to 0/72 on held-out banking tasks, from 37/55 to 8/55 on held-out Slack tasks, and from 15/140 to 0/140 on the travel suite, which we pre-registered and never tuned on, with no detectable utility cost on travel. On a Qwen2.5 7B agent the same code gives 27$\to$0, 23$\to$4 and 10$\to$3 (the last not significant, $p=0.085$). On banking it lets through fewer attacks than AgentDojo's tool filter and prompt-injection detector (6/72 each). A pre-registered single-module ablation did \emph{not} support the claim that the composition beats every module: the planner alone (5/72) and the action checkpoint alone (0/72) each come close to the full guard on banking. The ablation instead locates their blind spots. The planner admits a planned call that carries the attacker's values, which a lightweight value-provenance check in the checkpoint catches. The checkpoint admits a link the user's own task points to. Every attack that survives the full guard on Slack, on both backbones, is that second case.
+Tool-using LLM agents can be hijacked by instructions hidden in tool outputs, misused by their own users, or led by a misread request into actions nobody asked for. Defenses exist for each of these threats, but they are usually evaluated one at a time. We build a guard that combines four checks around a small open-weight agent: it screens the request, constrains tool calls to a plan made before any untrusted data is read, verifies critical actions against the user's intent and the origin of their argument values, and inspects tool responses. On AgentDojo, the guard blocks nearly all prompt-injection attacks on three suites and two backbones, including a suite we never tuned on, without a measurable loss in task completion. A pre-registered ablation shows that two of the checks each come close to the full guard on their own but fail on different attacks. The attacks that survive are links the user's own task asks the agent to follow.
 \end{abstract}
 
 % =====================================================================
@@ -56,7 +56,7 @@ Tool-using LLM agents face three distinct threats: a user who asks for harm, an 
 
 LLM agents that call tools act on content they did not write. A web page, an e-mail or a transaction note can carry text addressed to the agent, and an agent that follows it sends money, posts messages or visits links on an attacker's behalf \citep{greshake2023indirect,debenedetti2024agentdojo}. That indirect prompt injection is one of three threats an agent faces. The other two do not need an outside attacker: a user can ask for harm directly \citep{andriushchenko2025agentharm}, and an agent can misread a benign instruction and take an irreversible action nobody asked for \citep{fang2025inferact}.
 
-Each threat has a published defense built for it. AgentHarm motivates screening requests at intake. IPIGuard \citep{an2025ipiguard} fixes the agent's tool calls in a plan before it reads untrusted data. InferAct \citep{fang2025inferact} infers the agent's apparent task from its trajectory and checks it against the instruction before critical actions. ShieldMCP \citep{yergattikar2026shieldmcp} scans tool responses at runtime. A deployed agent faces all three threats at once, so the natural question is what happens when these defenses are composed around one agent, and in particular \emph{which} module stops \emph{which} attack.
+Each threat has defenses built for it: intake screening for harmful requests \citep{andriushchenko2025agentharm}, plan constraints and runtime response scanning for injections \citep{an2025ipiguard,yergattikar2026shieldmcp}, and intent checks before critical actions \citep{fang2025inferact}. A deployed agent faces all three threats at once, so the natural question is what happens when such defenses are composed around one agent, and in particular \emph{which} part stops \emph{which} attack.
 
 This paper answers that question for a small open-weight agent, where the defenses have the most to do: a 4B model that AgentDojo's attack hijacks in 39 of 72 held-out banking runs. We are not the first to compose prompt-injection defenses \citep{ramakrishnan2025securing}, and a design that constrains the plan and tracks data provenance is the core of CaMeL \citep{debenedetti2025camel}. Our contribution is empirical and narrower:
 
@@ -71,7 +71,7 @@ This paper answers that question for a small open-weight agent, where the defens
 \section{Threat Model and Problem Definition}
 \label{sec:threat}
 
-An agent receives a user instruction $u$ and a set of tools $T$. It runs a loop in which a backbone model proposes a call $c_t=(\tau_t, a_t)$ with $\tau_t\in T$ and arguments $a_t$, observes the tool's output $o_t$, and eventually returns a final answer. We consider three adversaries, following the three source threat models:
+An agent receives a user instruction $u$ and a set of tools $T$. It runs a loop in which a backbone model proposes a call $c_t=(\tau_t, a_t)$ with $\tau_t\in T$ and arguments $a_t$, observes the tool's output $o_t$, and eventually returns a final answer. We consider three adversaries:
 \begin{enumerate}
 \setlength\itemsep{0pt}
 \item \textbf{Hostile user} \citep{andriushchenko2025agentharm}: $u$ itself requests harm.
@@ -86,33 +86,36 @@ In the hostile-environment setting the attacker does not see the user's instruct
 
 \paragraph{Benchmarks and attacks.} AgentDojo \citep{debenedetti2024agentdojo} supplies the suites, attacks and environment-state graders we use. AgentHarm \citep{andriushchenko2025agentharm} measures compliance with directly harmful agentic requests. AgentVigil \citep{wang2025agentvigil} and SIRAJ \citep{zhou2026siraj} generate adaptive and diverse attacks by fuzzing and by distilled red-teamer models. We planned a diversity metric built on them but did not build it (\S\ref{sec:limitations}).
 
-\paragraph{Defenses.} Prompt-level defenses delimit untrusted data \citep{hines2024spotlighting} or repeat the user's task. Detector-based defenses classify tool outputs. Structural defenses constrain what the agent may call: IPIGuard plans a tool dependency graph (TDG) before execution, and CaMeL \citep{debenedetti2025camel} separates a privileged planner from a quarantined data model and tracks the provenance of every value. Our value check (\S\ref{sec:checkpoint}) is a far simpler string-level approximation of that provenance tracking. IPIGuard's Appendix G already pairs a weak executor with a stronger planner, including a Qwen2.5-7B-Instruct executor on AgentDojo. That is the closest published reference point to our 7B arm, although their numbers average all four suites and four attacks on different hardware. \citet{ramakrishnan2025securing} compose content filtering, guardrails and response verification and report that no single layer suffices. Our ablation tests the same claim on a different module set and does not reproduce it for a single attack.
+\paragraph{Defenses.} Prompt-level defenses delimit untrusted data \citep{hines2024spotlighting} or repeat the user's task. Detector-based defenses classify tool outputs. Structural defenses constrain what the agent may call: IPIGuard \citep{an2025ipiguard} plans a tool dependency graph (TDG) before execution, and CaMeL \citep{debenedetti2025camel} separates a privileged planner from a quarantined data model and tracks the provenance of every value. Action-level checks infer the agent's apparent task from its trajectory and verify it before critical actions \citep{fang2025inferact}, and runtime proxies scan tool descriptions and responses \citep{yergattikar2026shieldmcp}. Our value check (\S\ref{sec:checkpoint}) is a far simpler string-level approximation of that provenance tracking. IPIGuard's Appendix G already pairs a weak executor with a stronger planner, including a Qwen2.5-7B-Instruct executor on AgentDojo. That is the closest published reference point to our 7B arm, although their numbers average all four suites and four attacks on different hardware. \citet{ramakrishnan2025securing} compose content filtering, guardrails and response verification and report that no single layer suffices. Our ablation tests the same claim on a different module set and does not reproduce it for a single attack.
 
-\paragraph{The six source papers.} Table~\ref{tab:related} lists what we took from each paper and the number each reports. These numbers come from frontier-scale backbones on full benchmarks, so they give scale, not a baseline. \textit{These are the source papers' own reported numbers, included as context for the scale these mechanisms operate at in their original evaluations, not as a benchmark this project's numbers are statistically compared against. The papers evaluate frontier-scale backbones on the full versions of benchmarks like AgentDojo and AgentHarm, with far more compute and test cases than a free-tier model and a hand-picked subset allow here. The valid, controlled comparison this project makes is the internal one: the guarded agent against the same agent undefended, with the same backbone, the same test cases and the same run.}
+\paragraph{Comparison.} Table~\ref{tab:related} compares these approaches. Their reported numbers come from frontier-scale models on full benchmarks, so we compare only against our own undefended agent on the same tasks.
 
 \begin{table*}[t]
 \centering\small
-\setlength\tabcolsep{4pt}\begin{tabular}{@{}L{1.9cm}L{2.2cm}L{4.4cm}L{3.4cm}L{2.6cm}@{}}
+\setlength\tabcolsep{4pt}\begin{tabular}{@{}L{1.8cm}L{1.9cm}L{4.3cm}L{3.8cm}L{3.0cm}@{}}
 \toprule
-Paper & Threat & Mechanism we adopt & Where it differs here & Reported number \\
+Work & Threat & Mechanism & Evaluation (reported) & Limitation \\
 \midrule
-AgentHarm \citeyearpar{andriushchenko2025agentharm} & hostile user & intake screen over its 11 harm categories & rubric + dedicated safety classifier, not a benchmark & 82\% compliance, undefended (Mistral Large 2) \\
-IPIGuard \citeyearpar{an2025ipiguard} & hostile environment & TDG plan, Argument Estimation, Node Expansion & enforcement on tool identity; Fake Tool Invocation replaced by Quarantine & ASR 13.16\%$\to$0.69\% (AgentDojo) \\
-InferAct \citeyearpar{fang2025inferact} & misread intent & task inference blind to $u$, then verification, at critical actions only & separate 27B judge; value provenance added (rev 5) & up to +20\% Macro-F1 \\
-ShieldMCP \citeyearpar{yergattikar2026shieldmcp} & hostile environment (tools) & response scanning, untrusted-data delimiting & heuristic + prompt-guard classifier; no MCP proxy & IPI-via-response ASR 47.2\%$\to$5.8\% \\
-AgentVigil \citeyearpar{wang2025agentvigil} & evaluation & adaptive fuzzing of injections & planned for a diversity metric; \emph{not built} & ASR 38\%$\to$71\% vs.\ handcrafted \\
-SIRAJ \citeyearpar{zhou2026siraj} & evaluation & diverse, distilled red-teaming & planned; \emph{not built} & $\sim$2--2.5$\times$ coverage \\
+AgentHarm \citeyearpar{andriushchenko2025agentharm} & hostile user & benchmark of 110 harmful agentic tasks in 11 categories, with benign counterparts & 82\% compliance without attack (Mistral Large 2) & measures harm; proposes no defense \\
+IPIGuard \citeyearpar{an2025ipiguard} & hostile environment & plan a tool dependency graph before reading untrusted data; execute only planned calls & AgentDojo, ASR 13.16\%$\to$0.69\% & admits read-only calls outside the plan \\
+InferAct \citeyearpar{fang2025inferact} & misread intent & infer the apparent task from the trajectory, verify it before critical actions & up to +20\% Macro-F1 over baselines & two judge calls per critical action; no attacker \\
+ShieldMCP \citeyearpar{yergattikar2026shieldmcp} & hostile tools (MCP) & proxy checks on tool descriptions, parameters and responses & IPI-via-response ASR 47.2\%$\to$5.8\% & rests on detecting injected instructions \\
+CaMeL \citeyearpar{debenedetti2025camel} & hostile environment & privileged planner, quarantined data model, provenance of every value & AgentDojo & custom interpreter and security policies \\
+AgentVigil \citeyearpar{wang2025agentvigil} & (attack) & MCTS-guided fuzzing of injections & ASR 38\%$\to$71\% vs.\ handcrafted & attack generation, not defense \\
+SIRAJ \citeyearpar{zhou2026siraj} & (attack) & diverse seeds, distilled red-teamer & $\sim$2--2.5$\times$ coverage & attack generation, not defense \\
 \midrule
-CaMeL \citeyearpar{debenedetti2025camel} & hostile environment & --- (closest prior design) & we approximate its provenance tracking by string search & --- \\
+This work & all three & request screen, plan constraint, action--intent check with value tracing, response inspection & AgentDojo (3 suites, 2 small backbones), in-house suites & one attack; N=1; small backbones \\
 \bottomrule
 \end{tabular}
-\caption{The six source papers, plus CaMeL as the closest prior design. ``Reported number'' is each paper's own figure, for scale only. See the caveat in \S\ref{sec:related}.}
+\caption{Approaches compared. Evaluation figures are each paper's own, from frontier-scale models on full benchmarks; they give scale, not a baseline.}
 \label{tab:related}
 \end{table*}
 
 % =====================================================================
 \section{Method}
 \label{sec:method}
+
+The four modules build on prior defenses \citep{andriushchenko2025agentharm,an2025ipiguard,fang2025inferact,yergattikar2026shieldmcp}; below we describe them as implemented, and refer to them as the Harm Gate, the Planner, the Checkpoint and the Firewall.
 
 \subsection{Architecture}
 The agent is a plain ReAct-style loop \citep{yao2023react} with a prompted text protocol (\texttt{Thought:}/\texttt{Action:} JSON/\texttt{Final:}) rather than native function calling, so that any chat model can drive it (prompt in Appendix~\ref{app:prompts}). The loop code is byte-identical with and without defenses. Every defense sits either before the loop (Harm Gate, Planner) or in wrappers around the single tool-dispatch point (Figure~\ref{fig:arch}), so an A/B difference cannot come from the loop. Each module fails \emph{open} on a provider outage and records that it did. Runs with such a flag are re-run (\S\ref{sec:protocol}).
@@ -129,14 +132,14 @@ The agent is a plain ReAct-style loop \citep{yao2023react} with a prompted text 
   ar/.style={-{Stealth[length=1.6mm]}, thin},
   lab/.style={font=\tiny, inner sep=1pt}]
 \node[core] (u)  at (0,0)     {User\\instruction $u$};
-\node[def]  (hg) at (2.6,0)   {Harm Gate\\(AgentHarm)};
-\node[def]  (pl) at (5.4,0)   {Planner: TDG\\(IPIGuard)};
+\node[def]  (hg) at (2.6,0)   {Harm Gate\\request screen};
+\node[def]  (pl) at (5.4,0)   {Planner\\plan graph};
 \node[stop] (rf) at (2.6,1.2) {refuse};
 \node[core] (bb) at (5.4,-1.5) {Backbone\\agent loop};
 \node[def]  (pe) at (5.4,-3.0) {Plan\\enforcement};
-\node[def]  (mc) at (5.4,-4.5) {Checkpoint (InferAct)\\+ value trace};
+\node[def]  (mc) at (5.4,-4.5) {Checkpoint\\+ value trace};
 \node[env]  (tl) at (5.4,-6.0) {Tool /\\environment};
-\node[def]  (fw) at (1.9,-4.5) {Firewall +\\Quarantine\\(ShieldMCP)};
+\node[def]  (fw) at (1.9,-4.5) {Firewall +\\Quarantine};
 \node[stop] (bl) at (8.6,-3.0) {blocked:\\error to agent};
 \node[stop] (pa) at (8.6,-4.5) {pause:\\ask the user};
 \draw[ar] (u) -- (hg);
@@ -159,20 +162,20 @@ The agent is a plain ReAct-style loop \citep{yao2023react} with a prompted text 
 \label{sec:tags}
 AgentDojo's tools carry no risk metadata, and every module keys off it. We hand-labelled each tool in the three suites we ran (11 banking, 11 Slack, 28 travel) with three flags: \textit{critical} (state-changing or sending), \textit{read\_only}, and \textit{returns\_untrusted} (its output may contain third-party text). The labels were committed before any run, because they are a tuning surface. This static gating is the only sense in which the guard is risk-aware: the expensive Checkpoint runs only on critical calls, the Firewall only on untrusted outputs, and the plan may grow only with read-only calls. There is no learned or adaptive selection of defenses.
 
-\subsection{Harm Gate (from AgentHarm)}
-The Harm Gate screens $u$ before any backbone call. Its first stage is a rubric that flags only when two independent groups of AgentHarm-category patterns co-occur, because a single keyword (``send an email'') appears in benign and harmful requests alike. When the rubric is uncertain, a dedicated safety classifier (\texttt{gpt-oss-safeguard-20b}) decides. A flagged task is refused with zero backbone calls. AgentDojo contains no directly harmful requests, so this module is evaluated only on our in-house suite (\S\ref{sec:inhouse}).
+\subsection{Harmful-Request Screen}
+The Harm Gate screens $u$ before any backbone call. Its first stage is a rubric that flags only when two independent groups of patterns over eleven harm categories (fraud, cybercrime, harassment and others) co-occur, because a single keyword (``send an email'') appears in benign and harmful requests alike. When the rubric is uncertain, a dedicated safety classifier (\texttt{gpt-oss-safeguard-20b}) decides. A flagged task is refused with zero backbone calls. AgentDojo contains no directly harmful requests, so this module is evaluated only on our in-house suite (\S\ref{sec:inhouse}).
 
-\subsection{Planner and plan enforcement (from IPIGuard)}
-Before the agent reads any tool output, a planner model emits a JSON TDG of tool calls with dependencies (Appendix~\ref{app:prompts}). Arguments that depend on earlier outputs are written as placeholders (\emph{Argument Estimation}). During execution, a call is allowed if it matches an unexecuted plan node \emph{by tool name}, or if the tool is read-only (\emph{Node Expansion}). Any other call is rejected and the rejection is returned to the agent as an error. Matching on tool identity rather than argument values is what makes Argument Estimation work. It is also the Planner's main blind spot (\S\ref{sec:ablation}). From revision 3 on, the plan is written by a hosted 27B model while the small backbone acts. The planner never sees tool output, so this costs no security.
+\subsection{Plan Constraint}
+Before the agent reads any tool output, a planner model emits a JSON tool dependency graph (TDG) of tool calls with dependencies (Appendix~\ref{app:prompts}). Arguments that depend on earlier outputs are written as placeholders (\emph{Argument Estimation}). During execution, a call is allowed if it matches an unexecuted plan node \emph{by tool name}, or if the tool is read-only (\emph{Node Expansion}). Any other call is rejected and the rejection is returned to the agent as an error. Matching on tool identity rather than argument values is what makes Argument Estimation work. It is also the Planner's main blind spot (\S\ref{sec:ablation}). From revision 3 on, the plan is written by a hosted 27B model while the small backbone acts. The planner never sees tool output, so this costs no security.
 
-\subsection{Misalignment Checkpoint with value tracing (from InferAct)}
+\subsection{Action--Intent Check with Value Tracing}
 \label{sec:checkpoint}
 Before every critical call, unit 1 sees the action--observation trajectory and the proposed call, but \emph{not} the instruction, and describes the task the agent appears to be doing. Unit 2 sees the instruction, that description and the proposed call, and answers \textit{aligned} or \textit{misaligned}. A misaligned call is not executed, and the agent is told to stop and ask the user. Keeping the instruction away from unit 1 is what lets the check disagree with the agent; a unit that sees $u$ tends to restate it. The judge is a separate hosted 27B model, not the backbone it checks.
 
 Revision 5 adds \textbf{value tracing}. Every argument value of the proposed call (strings of at least three characters, and numbers, matched in normalised forms) is searched verbatim in $u$ and in every tool output seen so far. The result is shown to unit 2 under the action: for example, ``\texttt{recipient = "US13\ldots"}: in what \texttt{read\_file(\ldots)} returned''. If every value appears in $u$, the call skips both judge calls, since no untrusted content chose any part of it. This catches the case plan enforcement cannot: a planned \tool{send\_money} whose recipient was read from an injected note. It is a string-level approximation of CaMeL's provenance tracking \citep{debenedetti2025camel}. It cannot see a value the agent reformatted, and it has no notion of capabilities.
 
-\subsection{Response Firewall and Quarantine (from ShieldMCP and IPIGuard)}
-Outputs of \textit{returns\_untrusted} tools are scanned by a structural heuristic (imperatives addressed to the assistant, recipients, known sink tool names) and by a prompt-injection classifier (\texttt{llama-prompt-guard-2-86m}, threshold 0.5, first 1200 characters). Either firing is a flag. On a flag, Quarantine replays the response with the flagged blocks removed and a notice in their place, so that the user's task can continue. This stands in for IPIGuard's Fake Tool Invocation. If no block can be isolated, the response is withheld.
+\subsection{Response Inspection and Quarantine}
+Outputs of \textit{returns\_untrusted} tools are scanned by a structural heuristic (imperatives addressed to the assistant, recipients, known sink tool names) and by a prompt-injection classifier (\texttt{llama-prompt-guard-2-86m}, threshold 0.5, first 1200 characters). Either firing is a flag. On a flag, Quarantine replays the response with the flagged blocks removed and a notice in their place, so that the user's task can continue. If no block can be isolated, the response is withheld.
 
 \subsection{Execution workflow}
 Algorithm~\ref{alg:guard} gives the full loop. The single-module configurations of \S\ref{sec:ablation} switch individual lines off.
@@ -396,7 +399,7 @@ Backbone & Suite & No defense & Guard rev 5 & Ratio \\
 \label{tab:cost}
 \end{table}
 
-The guard roughly doubles the model calls per run (1.6--2.1$\times$, Table~\ref{tab:cost}). Planning and judging are themselves model calls. We do not report AgentDojo wall-clock time: every defended run had cache hits, and runs mixed machines and rate-limited hosted calls. In an uncached timing run on our in-house suite, with rate-limiter waits subtracted, the guard added 738\,ms per tool call on a hosted 27B backbone and 3025\,ms on a local 3B. That is not comparable to ShieldMCP's $\sim$118\,ms proxy overhead, which excludes extra model calls.
+The guard roughly doubles the model calls per run (1.6--2.1$\times$, Table~\ref{tab:cost}). Planning and judging are themselves model calls. We do not report AgentDojo wall-clock time: every defended run had cache hits, and runs mixed machines and rate-limited hosted calls. In an uncached timing run on our in-house suite, with rate-limiter waits subtracted, the guard added 738\,ms per tool call on a hosted 27B backbone and 3025\,ms on a local 3B. That is not comparable to the $\sim$118\,ms proxy overhead reported by \citet{yergattikar2026shieldmcp}, which excludes extra model calls.
 
 \subsection{In-house suites: the other two threats}
 \label{sec:inhouse}
@@ -410,7 +413,7 @@ Against a single injection attack, composition added little security beyond its 
 % =====================================================================
 \section{Conclusion and Future Work}
 \label{sec:conclusion}
-We composed four published agent defenses around a small open model and measured where each part works and fails. The guard removes nearly all successful \textit{important\_instructions} attacks on three AgentDojo suites and two backbones, including one suite and one backbone it was never tuned on, and it costs no detectable utility at its last revision. It is not more secure than its best single module against this attack. Its two strong modules fail on different attacks, and a cheap value-provenance check is what joins them. The attack that survives everything is a link the user's own task tells the agent to follow.
+We built a guard that screens requests, constrains tool calls to a plan, checks critical actions against the user's intent and the origin of their values, and inspects tool responses, and we measured where each part works and fails on small open models. The guard removes nearly all successful \textit{important\_instructions} attacks on three AgentDojo suites and two backbones, including one suite and one backbone it was never tuned on, and it costs no detectable utility at its last revision. It is not more secure than its best single module against this attack. Its two strong modules fail on different attacks, and a cheap value-provenance check is what joins them. The attack that survives everything is a link the user's own task tells the agent to follow.
 
 Future work: (1) a stronger provenance mechanism for URL arguments, tested against \inj{3}; (2) AgentDojo's other attacks and adaptive ones (the AgentVigil- and SIRAJ-based diversity metric we planned and did not build); (3) the workspace suite; (4) one model family at several sizes, to separate capability from training recipe; (5) a policy that selects defenses by assessed risk, which would need its own evaluation against the fixed composition reported here.
 
@@ -426,7 +429,7 @@ Future work: (1) a stronger provenance mechanism for URL arguments, tested again
 \item \textbf{Baselines.} AgentDojo's defenses were ported to our prompted loop, and only on banking held-out with the 4B. One of them is incomplete.
 \item \textbf{Hosted dependencies.} The planner, judge and classifiers are hosted models with daily limits. Runs that failed open were re-run, but a deployment would face the same outages.
 \item \textbf{Hand-written suites.} The Harm Gate and the misalignment evidence come from 39 hand-written cases, and the composite index is our own.
-\item \textbf{No comparison with the source papers' numbers.} Their backbones, benchmarks and budgets differ, and we make no claim to match or beat them.
+\item \textbf{No comparison with prior work's numbers.} Their backbones, benchmarks and budgets differ, and we make no claim to match or beat them.
 \end{itemize}
 
 \section*{Ethics Statement}

@@ -56,6 +56,7 @@ section number clashes with this branch's §21.
 | 30 | Workspace not run: hosted TPM limit; firewall flagged 28/84 clean outputs | Spike §4.3, §4.8 |
 | 31 | Source papers' numbers (Table 1) | `CLAUDE.md` §9.2 and the PDFs in `docs/papers` |
 | 32 | IPIGuard App. G includes a Qwen2.5-7B-Instruct executor | IPIGuard PDF, Table 5 |
+| 33 | Ramakrishnan & Balaji (arXiv 2511.15759) compose filtering, guardrails and response verification and report no single layer suffices | arXiv HTML v1 §6.5, checked 2026-10-30 ("No single mechanism achieves acceptable protection independently") |
 
 ## Compiled copy
 
