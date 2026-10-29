@@ -1074,3 +1074,43 @@ With four splits compared and no correction, neither is evidence.
 **Reading it.** The security result holds on both backbones and both suites: every defended configuration ends with 0 banking attacks and 4–8 Slack attacks, against 20–39 undefended. Rev 5 never costs security.
 
 Its utility gain is backbone- and task-dependent. It points the right way on banking held-out (the tasks it was designed from) for both backbones. It did not reach significance on the 7B, did not generalise to travel (section 19), and reversed direction on 7B banking dev. The supportable claim is "rev 5 removes rev 3's utility cost relative to no defense, without losing security", not "rev 5 improves utility".
+
+---
+
+## 22. Single-module ablation: pre-registered, written 2026-10-29 before any result
+
+**Question.** Is the ensemble's AgentDojo security the work of one module, or does it need the combination (CLAUDE.md 9.1 tier 2)? A cache-only replay credited the Planner as the *first* module to block most stopped attacks on banking and Slack. First-to-block does not show the attack would have succeeded without it. Running each module alone does.
+
+**Setup.**
+- **Backbone:** `qwen3:4b-instruct-2507-q4_K_M` (Ollama digest `0edcdef34593`) on a Kaggle T4, `OLLAMA_CONTEXT_LENGTH=8192`.
+- **Defenses:** revision 5, with the 27B planner and judge (`qwen/qwen3.8-27b`).
+- **Attack and sampling:** `important_instructions`, temperature 0, N = 1.
+- **Tasks:** banking held-out (8 user tasks, 80 runs) and Slack held-out (11 user tasks, 66 runs).
+- **Code:** the defenses are frozen at `2c292f6`. The only addition is `demos/agentdojo_run.py --modules`, which passes `enabled_modules` to `ConditionB` and adds `mod-…` to the results file name.
+
+**Configurations.**
+
+| Name | `--modules` |
+|---|---|
+| P, Planner only | `planner` |
+| F, Firewall + Quarantine only | `firewall,quarantine` |
+| M, Misalignment Checkpoint only | `misalignment` |
+
+The Harm Gate is off in all three. It stopped 0 of 235 attacks in the attribution replay, and leaving it on would add a refusal path to every configuration.
+
+**Comparators.**
+- **Existing 4B files (laptop GTX 1650 Ti, same model file):** A and full rev 5 on the same held-out tasks. Banking: ASR 39/72 → 0/72. Slack: ASR 37/55 → 8/55.
+- **Hardware drift check:** A is re-run on Kaggle first. It makes no Groq calls. Temperature 0 is not perfectly repeatable on Ollama (banking dev A was 21 vs 20 on the 7B), so A's laptop-vs-Kaggle difference bounds how much of any gap is hardware.
+
+**Tests** (two-sided Fisher exact on attacked runs: 72 banking, 55 Slack):
+1. **Each single configuration vs the full ensemble, ASR, per suite.**
+   - Prediction: P is not significantly different from the full ensemble on banking.
+   - Prediction: F and M are each significantly higher than the full ensemble on banking.
+2. **Each single configuration vs A, ASR, per suite.** Prediction: P is lower than A on both suites. F is not significantly different from A on banking, where the Firewall blocked nothing in the replay.
+3. **Utility under attack and clean utility.** Reported for every configuration against A and the full ensemble, with no directional prediction.
+
+**Decision rule for the paper.**
+- **"The ensemble covers what no single module covers"** is claimed only if every single configuration has significantly higher ASR than the full ensemble on at least one suite.
+- **"The ensemble's security is the Planner's"** is reported instead if P matches the full ensemble on both suites, and the paper's framing changes accordingly.
+
+**Rules.** The earlier amendments apply. A run that failed open on a provider error is removed and re-run. A repeatable defense failure counts. Order: A drift check; then banking P, F, M; then Slack P, F, M. Results are downloaded after each suite.

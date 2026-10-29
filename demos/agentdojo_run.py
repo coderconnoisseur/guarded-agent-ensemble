@@ -38,7 +38,7 @@ from src.agent.loop import AgentResult  # noqa: E402
 from src.agentdojo_bridge import SPLITS, GuardedPipeline  # noqa: E402
 from src.llm.client import LLMClient  # noqa: E402
 from src.pipeline.condition_a import ConditionA  # noqa: E402
-from src.pipeline.condition_b import ConditionB  # noqa: E402
+from src.pipeline.condition_b import ALL_MODULES, ConditionB  # noqa: E402
 
 BENCHMARK_VERSION = "v1.2.2"
 # AgentDojo's own loop default (ToolsExecutionLoop max_iters). Ours is 6, which
@@ -153,8 +153,17 @@ def main() -> None:
                     help="settings.DEFENSE_REVISION; 0 = defenses as published")
     ap.add_argument("--planner-model", default=None,
                     help="Condition B only: model that writes the plan (default: the backbone)")
+    ap.add_argument("--modules", default="",
+                    help="Condition B only: comma-separated subset of defense modules "
+                         "(single-module ablation, CLAUDE.md 9.1 tier 2); default all")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
+    modules = frozenset(m.strip() for m in args.modules.split(",") if m.strip()) or None
+    if modules and args.condition != "B":
+        sys.exit("--modules only applies to Condition B")
+    if modules and modules - ALL_MODULES:
+        # Fail before any run: ConditionB would only raise at the first task.
+        sys.exit(f"unknown module(s): {sorted(modules - ALL_MODULES)}; choose from {sorted(ALL_MODULES)}")
 
     # A model missing from the chain is sent to the default provider instead.
     # Measured on the first smoke run: qwen2.5:3b without USE_LOCAL_BACKBONE=1
@@ -183,7 +192,8 @@ def main() -> None:
     settings.DEFENSE_REVISION = args.defense_revision
     rev = f"rev{args.defense_revision}" if args.defense_revision else ""
     plan_tag = f"plan-{args.planner_model.replace('/', '-').replace(':', '-')}" if args.planner_model else ""
-    tag = "_".join(t for t in (args.tasks if args.tasks != "all" else "", rev, plan_tag, args.tag) if t)
+    mod_tag = f"mod-{'+'.join(sorted(modules))}" if modules else ""
+    tag = "_".join(t for t in (args.tasks if args.tasks != "all" else "", rev, plan_tag, mod_tag, args.tag) if t)
     path = results_path(args.suite, args.condition, args.model, args.attack, tag)
     rows: list[dict] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else []
     done = {(r["user_task"], r["injection_task"]) for r in rows}
@@ -208,7 +218,7 @@ def main() -> None:
             if args.condition == "A":
                 return cls(client, registry=registry, model=args.model, max_steps=MAX_STEPS)
             return cls(client, registry=registry, model=args.model, max_steps=MAX_STEPS,
-                       planner_model=args.planner_model)
+                       planner_model=args.planner_model, enabled_modules=modules)
 
         pipeline = GuardedPipeline(make_runner, f"condition-{args.condition.lower()}")
         attack = load_attack(args.attack, suite, pipeline)
@@ -242,6 +252,7 @@ def main() -> None:
                 "backbone_model": args.model,
                 "defense_revision": args.defense_revision,
                 "planner_model": args.planner_model,
+                "enabled_modules": sorted(modules) if modules else None,
                 "benchmark_version": BENCHMARK_VERSION,
             })
             path.write_text(json.dumps(rows, indent=1), encoding="utf-8")
