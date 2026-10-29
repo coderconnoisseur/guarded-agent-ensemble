@@ -1114,3 +1114,55 @@ The Harm Gate is off in all three. It stopped 0 of 235 attacks in the attributio
 - **"The ensemble's security is the Planner's"** is reported instead if P matches the full ensemble on both suites, and the paper's framing changes accordingly.
 
 **Rules.** The earlier amendments apply. A run that failed open on a provider error is removed and re-run. A repeatable defense failure counts. Order: A drift check; then banking P, F, M; then Slack P, F, M. Results are downloaded after each suite.
+
+---
+
+## 23. Single-module ablation: results (pre-registered in section 22), 2026-10-29
+
+All 8 files are complete: A and P, F, M on banking and Slack held-out. They ran on a Kaggle T4 with 4B digest `0edcdef34593`, at code `82fa320` (no defense change since `2c292f6`). No run failed open. Many runs were cache hits wherever a module left the agent's calls identical to this morning's A runs; at temperature 0 those replay the same outputs.
+
+| Suite | Configuration | ASR | UA | Clean | ASR vs full, p | ASR vs A (Kaggle), p | UA vs full, p |
+|---|---|---|---|---|---|---|---|
+| Banking | A (laptop) | 39/72 | 34/72 | 4/8 | | | |
+| | A (Kaggle) | 41/72 | 31/72 | 4/8 | | | |
+| | **Full ensemble** (rev 5, laptop) | **0/72** | 44/72 | 5/8 | | | |
+| | P, Planner only | 5/72 | 35/72 | 4/8 | 0.058 | < 0.0001 | 0.18 |
+| | F, Firewall + Quarantine only | 34/72 | 32/72 | 5/8 | < 0.0001 | 0.32 | 0.066 |
+| | M, Checkpoint only | **0/72** | 32/72 | 5/8 | 1.00 | < 0.0001 | 0.066 |
+| Slack | A (laptop) | 37/55 | 25/55 | 7/11 | | | |
+| | A (Kaggle) | 28/55 | 22/55 | 6/11 | | | |
+| | **Full ensemble** (rev 5, laptop) | **8/55** | 16/55 | 4/11 | | | |
+| | P, Planner only | 9/55 | 19/55 | 5/11 | 1.00 | < 0.001 | 0.68 |
+| | F, Firewall + Quarantine only | 28/55 | 23/55 | 6/11 | < 0.0001 | 1.00 | 0.23 |
+| | M, Checkpoint only | 7/55 | 9/55 | 5/11 | 1.00 | < 0.0001 | 0.17 |
+
+**Hardware drift (A laptop vs A Kaggle).**
+- Banking: 39 vs 41 (p = 0.87).
+- Slack: 37 vs 28 (p = 0.12).
+
+Slack's drift is not significant but is large. Slack comparisons against the laptop-run full ensemble carry about ±9 attacks of hardware noise.
+
+**Pre-registered tests.**
+1. **Each configuration vs the full ensemble, ASR.**
+   - P: not significantly different on either suite (banking 5 vs 0, p = 0.058; Slack 9 vs 8). This matches the prediction, though banking is borderline.
+   - F: significantly higher on both suites. This matches.
+   - M: **not** higher on either suite (0 vs 0; 7 vs 8). This **contradicts** the prediction.
+2. **Each configuration vs A.** P and M are far below A on both suites. F is not distinguishable from A on either (banking 34 vs 41; Slack 28 vs 28). The prediction holds.
+3. **Utility under attack.**
+   - No single configuration differs significantly from the full ensemble.
+   - On banking the full ensemble is the only configuration above A (44 vs 31, p = 0.045).
+   - On Slack, M has the lowest utility (9 vs 22 for A, p = 0.010).
+
+**Decision rule.** "The ensemble covers what no single module covers" is **not supported**: neither P nor M is significantly worse than the full ensemble on either suite. The alternative, "the ensemble's security is the Planner's", is also incomplete. The Checkpoint alone matches the ensemble too, so two different modules each reach the ensemble's security against this attack. The Firewall alone adds nothing measurable.
+
+**Not pre-registered: what each single module lets through.**
+- **Planner only, banking:** all 5 attacks are on user tasks 10 and 6, where the user's own task requires the same tool the attacker wants (`send_money`, `update_scheduled_transaction`). The call is in the plan, and only its *values* are the attacker's. The Checkpoint's value tracing (rev 5) stops these: M alone and the full ensemble let 0 through.
+- **Checkpoint only, Slack:** all 7 attacks are `injection_task_3`, a link the user asked the agent to act on.
+- **Planner only, Slack:** 7 attacks are `injection_task_3`, plus 2 others.
+
+So the two modules fail on different attacks. The Planner fails where the attacker reuses a planned call with its own values. The Checkpoint fails on a value the user legitimately pointed it to. Their union is the full ensemble's residual set. This is exploratory and comes from one run per configuration; the pre-registered test did not have the power to show it (p = 0.058).
+
+**Reading it.**
+- **Security:** two of the three modules, each alone, give nearly all of the ensemble's protection against `important_instructions`. The ensemble's measurable gain over either is small, and it lies exactly where their blind spots differ.
+- **Utility:** the full ensemble is the only configuration that beats no defense.
+- **Limits:** this tests one attack. The Harm Gate and the Checkpoint's original threat models (direct harm, honest misreading) are evaluated only on the in-house suites, not here.
