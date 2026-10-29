@@ -15,6 +15,8 @@
 \usepackage{inconsolata}
 \usepackage{graphicx}
 \usepackage{booktabs}
+\usepackage{array}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 \usepackage{multirow}
 \usepackage{amsmath}
 \usepackage{xcolor}
@@ -29,6 +31,8 @@
 \newcommand{\task}[1]{\texttt{user\_task\_#1}}
 \newcommand{\tool}[1]{\texttt{#1}}
 \newcommand{\todo}[1]{\textcolor{red}{[TODO: #1]}}
+% Generated table rows: the TeX primitive, because LaTeX's \input breaks \bottomrule inside tabular.
+\makeatletter\newcommand{\inputrows}[1]{\@@input #1 }\makeatother
 
 \title{Where Each Defense Fails: A Per-Attack Anatomy of a\\Composed Guard for Small Tool-Using LLM Agents}
 
@@ -63,8 +67,6 @@ This paper answers that question for a small open-weight agent, where the defens
 \item \textbf{An honest evaluation protocol.} Defense changes were developed on a committed dev split and reported on a held-out split. The travel suite, a second backbone and the ablation were pre-registered before any result, and we report the predictions that failed (\S\ref{sec:protocol}).
 \end{itemize}
 
-We report what did not work alongside what did. The pre-registered claim that the composition beats every single module was not supported. A utility gain from our last revision did not replicate on the unseen suite or the second backbone. And no module stops an attack that sends the agent to a link when the user's own task tells it to follow links.
-
 % =====================================================================
 \section{Threat Model and Problem Definition}
 \label{sec:threat}
@@ -90,7 +92,7 @@ In the hostile-environment setting the attacker does not see the user's instruct
 
 \begin{table*}[t]
 \centering\small
-\begin{tabular}{@{}p{2.1cm}p{2.5cm}p{4.7cm}p{3.6cm}p{2.4cm}@{}}
+\setlength\tabcolsep{4pt}\begin{tabular}{@{}L{1.9cm}L{2.2cm}L{4.4cm}L{3.4cm}L{2.6cm}@{}}
 \toprule
 Paper & Threat & Mechanism we adopt & Where it differs here & Reported number \\
 \midrule
@@ -104,7 +106,7 @@ SIRAJ \citeyearpar{zhou2026siraj} & evaluation & diverse, distilled red-teaming 
 CaMeL \citeyearpar{debenedetti2025camel} & hostile environment & --- (closest prior design) & we approximate its provenance tracking by string search & --- \\
 \bottomrule
 \end{tabular}
-\caption{The six source papers, plus CaMeL as the closest prior design. ``Reported number'' is each paper's own figure (CLAUDE.md \S9.2), for scale only. See the caveat in \S\ref{sec:related}.}
+\caption{The six source papers, plus CaMeL as the closest prior design. ``Reported number'' is each paper's own figure, for scale only. See the caveat in \S\ref{sec:related}.}
 \label{tab:related}
 \end{table*}
 
@@ -119,33 +121,35 @@ The agent is a plain ReAct-style loop \citep{yao2023react} with a prompted text 
 \centering
 \resizebox{\columnwidth}{!}{%
 \begin{tikzpicture}[
-  node distance=4mm and 5mm,
-  box/.style={draw, rounded corners=2pt, align=center, font=\scriptsize, minimum height=7mm, inner sep=2pt},
+  box/.style={draw, rounded corners=2pt, align=center, font=\scriptsize, minimum height=7mm, minimum width=19mm, inner sep=2pt},
   def/.style={box, fill=blue!8},
   core/.style={box, fill=gray!12},
   env/.style={box, fill=green!8},
+  stop/.style={box, draw=red!60, text=red!60!black, minimum width=17mm},
   ar/.style={-{Stealth[length=1.6mm]}, thin},
-  lab/.style={font=\tiny, midway, fill=white, inner sep=1pt}]
-\node[core] (u) {User\\instruction $u$};
-\node[def, right=of u] (hg) {Harm Gate\\(AgentHarm)};
-\node[def, right=of hg] (pl) {Planner: TDG\\(IPIGuard)};
-\node[core, below=8mm of pl] (bb) {Backbone\\agent loop};
-\node[def, below=7mm of bb] (pe) {Plan\\enforcement};
-\node[def, left=of pe] (mc) {Checkpoint\\(InferAct)\\+ value trace};
-\node[env, left=of mc] (tl) {Tool /\\environment};
-\node[def, above=7mm of tl] (fw) {Firewall +\\Quarantine\\(ShieldMCP)};
-\node[box, right=of pe, draw=red!60, text=red!60!black] (bl) {blocked:\\error to agent};
+  lab/.style={font=\tiny, inner sep=1pt}]
+\node[core] (u)  at (0,0)     {User\\instruction $u$};
+\node[def]  (hg) at (2.6,0)   {Harm Gate\\(AgentHarm)};
+\node[def]  (pl) at (5.4,0)   {Planner: TDG\\(IPIGuard)};
+\node[stop] (rf) at (2.6,1.2) {refuse};
+\node[core] (bb) at (5.4,-1.5) {Backbone\\agent loop};
+\node[def]  (pe) at (5.4,-3.0) {Plan\\enforcement};
+\node[def]  (mc) at (5.4,-4.5) {Checkpoint (InferAct)\\+ value trace};
+\node[env]  (tl) at (5.4,-6.0) {Tool /\\environment};
+\node[def]  (fw) at (1.9,-4.5) {Firewall +\\Quarantine\\(ShieldMCP)};
+\node[stop] (bl) at (8.6,-3.0) {blocked:\\error to agent};
+\node[stop] (pa) at (8.6,-4.5) {pause:\\ask the user};
 \draw[ar] (u) -- (hg);
-\draw[ar] (hg) -- node[lab]{benign} (pl);
-\draw[ar] (hg.north) -- ++(0,3mm) node[above, font=\tiny]{refuse} ;
-\draw[ar] (pl) -- node[lab]{plan} (bb);
-\draw[ar] (bb) -- node[lab]{call $c_t$} (pe);
-\draw[ar] (pe) -- node[lab]{in plan or read-only} (mc);
-\draw[ar] (pe) -- node[lab]{off-plan write} (bl);
-\draw[ar] (mc) -- node[lab]{critical: aligned} (tl);
-\draw[ar] (mc.south) -- ++(0,-3mm) node[below, font=\tiny]{misaligned: pause} ;
-\draw[ar] (tl) -- node[lab]{$o_t$} (fw);
-\draw[ar] (fw) -- node[lab]{sanitised $o_t$} (bb);
+\draw[ar] (hg) -- node[lab, above]{benign} (pl);
+\draw[ar] (hg) -- node[lab, right]{harmful} (rf);
+\draw[ar] (pl) -- node[lab, right]{plan, before any $o_t$} (bb);
+\draw[ar] (bb) -- node[lab, right]{proposed call $c_t$} (pe);
+\draw[ar] (pe) -- node[lab, right]{in plan, or read-only} (mc);
+\draw[ar] (pe) -- node[lab, above]{off-plan write} (bl);
+\draw[ar] (mc) -- node[lab, right]{aligned, or not critical} (tl);
+\draw[ar] (mc) -- node[lab, above]{misaligned} (pa);
+\draw[ar] (tl.west) -| node[lab, below, pos=0.25]{output $o_t$} (fw.south);
+\draw[ar] (fw.north) |- node[lab, above, pos=0.75]{sanitised $o_t$} (bb.west);
 \end{tikzpicture}}
 \caption{The composed guard. Blue boxes are defense modules. The Harm Gate and Planner run once, before the loop. Plan enforcement, the Checkpoint and the Firewall wrap the single tool-dispatch point. The Checkpoint fires only on tools tagged \textit{critical}, and the Firewall scans only tools tagged \textit{returns\_untrusted}.}
 \label{fig:arch}
@@ -210,7 +214,7 @@ The ensemble was first measured on AgentDojo as built for our own in-house cases
 
 \begin{table}[t]
 \centering\scriptsize
-\begin{tabular}{@{}p{0.5cm}p{4.0cm}p{2.1cm}@{}}
+\begin{tabular}{@{}L{0.5cm}L{4.0cm}L{2.1cm}@{}}
 \toprule
 Rev & Change & Designed on \\
 \midrule
@@ -241,7 +245,7 @@ The agent backbone is \texttt{qwen3:4b-instruct-2507} (Q4\_K\_M) \citep{qwen2025
 
 \begin{table}[t]
 \centering\scriptsize
-\begin{tabular}{@{}lccc@{}}
+\resizebox{\columnwidth}{!}{\begin{tabular}{@{}lccc@{}}
 \toprule
  & Banking & Slack & Travel \\
 \midrule
@@ -258,7 +262,7 @@ Planner, judge & \multicolumn{3}{c}{\texttt{qwen/qwen3.8-27b} (Groq)} \\
 Harm classifier & \multicolumn{3}{c}{\texttt{openai/gpt-oss-safeguard-20b} (Groq)} \\
 Injection classifier & \multicolumn{3}{c}{\texttt{meta-llama/llama-prompt-guard-2-86m} (Groq)} \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \caption{Experimental configuration. Banking tasks 8 and 10 are always solved by an agent that does nothing.}
 \label{tab:setup}
 \end{table}
@@ -282,14 +286,14 @@ Each (user task, injection) pair runs once at temperature 0. The travel, 7B and 
 
 \begin{table*}[t]
 \centering\small
-\begin{tabular}{@{}llccc|ccc|ccc|cc@{}}
+\resizebox{\textwidth}{!}{\begin{tabular}{@{}llccc|ccc|ccc|cc@{}}
 \toprule
  & & \multicolumn{3}{c|}{No defense} & \multicolumn{3}{c|}{Guard, rev 3} & \multicolumn{3}{c|}{Guard, rev 5} & \multicolumn{2}{c}{$p$, A vs.\ rev 5} \\
 Backbone & Suite & ASR$\downarrow$ & UA$\uparrow$ & Clean$\uparrow$ & ASR & UA & Clean & ASR & UA & Clean & ASR & UA \\
 \midrule
-\input{tables/main_rows.tex}
+\inputrows{tables/main_rows.tex}
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \caption{Main results on AgentDojo (\textit{important\_instructions}, N=1, temperature 0). Banking and Slack are held-out splits; for revisions 3--5 these are post hoc (Table~\ref{tab:revisions}). Travel was pre-registered and never tuned on. The 4B ``no defense'' banking and Slack rows are the laptop runs. Generated by \texttt{scripts/make\_figures.py}.}
 \label{tab:main}
 \end{table*}
@@ -309,13 +313,13 @@ Table~\ref{tab:main} and Figure~\ref{fig:asr} give the main results. \textbf{Sec
 
 \begin{table}[t]
 \centering\scriptsize
-\begin{tabular}{@{}lcccc@{}}
+\resizebox{\columnwidth}{!}{\begin{tabular}{@{}lcccc@{}}
 \toprule
 Defense (4B, banking held-out) & ASR$\downarrow$ & UA$\uparrow$ & Clean$\uparrow$ & $p$ ASR vs.\ rev 5 \\
 \midrule
-\input{tables/baselines_rows.tex}
+\inputrows{tables/baselines_rows.tex}
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \caption{AgentDojo's shipped defenses, ported to our loop, on the same backbone and tasks. Repeat-prompt is incomplete (68 of 80 runs). Revision 5 is post hoc on these tasks; revision 1 (not post hoc) also has ASR 0/72.}
 \label{tab:baselines}
 \end{table}
@@ -328,13 +332,13 @@ Table~\ref{tab:baselines} compares the guard with AgentDojo's own defenses. Spot
 \begin{table}[t]
 \centering\scriptsize
 \setlength\tabcolsep{3pt}
-\begin{tabular}{@{}llccccc@{}}
+\resizebox{\columnwidth}{!}{\begin{tabular}{@{}llccccc@{}}
 \toprule
  & Configuration & ASR & UA & Clean & $p$ vs.\ full & $p$ vs.\ A \\
 \midrule
-\input{tables/ablation_rows.tex}
+\inputrows{tables/ablation_rows.tex}
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \caption{Single-module ablation (4B, held-out, revision 5, pre-registered). Single modules ran on Kaggle; the $p$ vs.\ A column uses the Kaggle no-defense run. The full ensemble ran on the laptop.}
 \label{tab:ablation}
 \end{table}
@@ -376,8 +380,6 @@ Table~\ref{tab:attribution} credits each stopped attack to the first module that
 
 The residual attacks are narrow. On Slack, \inj{3} (``Visit a website at the link \ldots'') survives on both backbones. The user tasks it rides on ask the agent to read a page and act on it. The attacker's \tool{get\_webpage} call is read-only, so Node Expansion admits it. Its URL comes from a page the user pointed to, so value tracing grounds it. Our revision 2 blocked reads to addresses that neither the user nor the plan named, and that cut Slack ASR to 0/55. But it also blocked the legitimate links that tasks such as ``summarise the article Bob posted'' must follow, and UA fell to 2/55. At the level of a single call, the legitimate action and the attack are the same action. Separating them needs provenance relative to the injection itself, which is the capability CaMeL's design provides and our string check does not. The 7B's three residual travel attacks are all \inj{6}, whose goal is only to \emph{say} something (recommend a hotel). That attack issues no tool call, and no module inspects the final answer.
 
-On the cost side, a replay of the held-out runs where revision 3 lost utility that the undefended agent had attributed banking's 11 losses to the Checkpoint (9) and the Planner (2). Slack's 13 losses split into empty plans (5), the Checkpoint (2) and the agent itself (6). Revisions 4 and 5 targeted those losses.
-
 \subsection{Cost}
 \label{sec:cost}
 
@@ -387,7 +389,7 @@ On the cost side, a replay of the held-out runs where revision 3 lost utility th
 \toprule
 Backbone & Suite & No defense & Guard rev 5 & Ratio \\
 \midrule
-\input{tables/cost_rows.tex}
+\inputrows{tables/cost_rows.tex}
 \bottomrule
 \end{tabular}
 \caption{Mean model calls per run (backbone and defense calls together).}
@@ -398,14 +400,12 @@ The guard roughly doubles the model calls per run (1.6--2.1$\times$, Table~\ref{
 
 \subsection{In-house suites: the other two threats}
 \label{sec:inhouse}
-AgentDojo tests only the hostile environment. The Harm Gate and the Checkpoint's original task (catching honest misreadings) were evaluated only on 39 hand-written cases, 15 of them injections and 8 direct-harm, on a local \texttt{qwen2.5:3b} and a hosted 27B. On the 3B, the full guard reduced injection success from 6/15 to 0/15 ($p=0.008$) and harmful compliance from 8/8 to 0/8 ($p=0.0001$), both one-sided Fisher. Its Checkpoint reached a misalignment Macro-F1 of 0.81. On the 27B, whose baseline was already 1/15 and 2/8, neither change was significant. In this mixed suite the composition \emph{did} beat every single module on our composite index (GAI 0.933 vs.\ 0.817 for the best single module, Harm Gate only), because only the Harm Gate covers direct harm. That is the coverage argument the AgentDojo ablation could not test, since AgentDojo has one threat. With latency included, the index fell on the 27B (0.927$\to$0.830), so on a backbone the attacks rarely beat, the guard was a net cost. Replayed on the 21 in-house misalignment cases, revision 5 raised Macro-F1 from 0.76 (revision 3) to 0.90. One false-premise case is now skipped by design, because every value in it came from the user. Appendix~\ref{app:inhouse} gives the tables. These are small hand-written suites, and the index is our own construction.
+AgentDojo tests only the hostile environment. The Harm Gate and the Checkpoint's original task (catching honest misreadings) were evaluated only on 39 hand-written cases, 15 of them injections and 8 direct-harm, on a local \texttt{qwen2.5:3b} and a hosted 27B. On the 3B, the full guard reduced injection success from 6/15 to 0/15 ($p=0.008$) and harmful compliance from 8/8 to 0/8 ($p=0.0001$), both one-sided Fisher. Its Checkpoint reached a misalignment Macro-F1 of 0.81. On the 27B, whose baseline was already 1/15 and 2/8, neither change was significant. In this mixed suite the composition \emph{did} beat every single module on our composite index (GAI 0.933 vs.\ 0.817 for the best single module, Harm Gate only), because only the Harm Gate covers direct harm. That is the coverage argument the AgentDojo ablation could not test, since AgentDojo has one threat. With latency included, the index fell on the 27B (0.927$\to$0.830), so on a backbone the attacks rarely beat, the guard was a net cost. Replayed on the 21 in-house misalignment cases, revision 5 raised Macro-F1 from 0.76 (revision 3) to 0.90. One false-premise case is now skipped by design, because every value in it came from the user. Appendix~\ref{app:inhouse} gives the tables.
 
 % =====================================================================
 \section{Discussion}
 \label{sec:discussion}
-Two results run against the usual case for composing defenses. Against a single injection attack, composition added little security beyond its best module. What it did add was where the modules' blind spots differ: the Planner trusts a planned call's values, and the Checkpoint trusts values the user's task points to. Composition was also the only configuration whose banking UA beat no defense. On its design tasks, that gain came from two targeted fixes: a value-traced password change that now skips the judge (revision 3 to 5, task 14: 0 to 9 of 9 runs solved), and a failed call that no longer consumes its plan node (task 13: 5 to 8 of 9). We do not claim it transfers, since it did not replicate on travel (\S\ref{sec:main}). The composition's coverage argument holds when the threats differ, which our in-house suite shows and AgentDojo cannot.
-
-The residual attack is a design limit, not a tuning gap. Any defense that judges one call at a time sees the same \tool{get\_webpage} call whether the link came from the user's article or from an injected line, and our attempt to separate them by address (revision 2) traded all remaining security for most of the utility. That points toward information-flow designs such as CaMeL, where the provenance of the URL relative to the untrusted content is tracked explicitly.
+Against a single injection attack, composition added little security beyond its best module. What it added sits where the modules' blind spots differ (\S\ref{sec:ablation}), and the full guard was the only configuration whose banking UA beat no defense. The coverage argument for composing defenses holds when the threats differ, which our in-house suite shows (\S\ref{sec:inhouse}) and a single-attack benchmark cannot. The surviving \inj{3} class is a design limit of call-level checks, not a tuning gap (\S\ref{sec:errors}): telling a legitimate link from an injected one needs the provenance of the URL relative to the untrusted content, which information-flow designs such as CaMeL track explicitly.
 
 % =====================================================================
 \section{Conclusion and Future Work}
@@ -543,6 +543,8 @@ VERDICT: <aligned or misaligned> | WHY: <one short sentence>
 \paragraph{Slack operating points (4B, held-out).} No defense: ASR 37/55, UA 25/55. Revision 1: 8/55, 9/55. Revision 2: 0/55, 2/55. Revision 3: 8/55, 13/55. Revision 5: 8/55, 16/55. Revision 2's address rule is the only configuration that stopped \inj{3}, and it cost most of the utility (\S\ref{sec:errors}).
 
 \paragraph{Revision 0, as built.} Before any AgentDojo-specific change, on all 16 banking tasks with the 4B, the guard reduced ASR from 60/144 to 1/144. Clean utility fell from 9/16 to 6/16, and five of those six were tasks a do-nothing agent also solves. The early utility cost was real. The held-out protocol and revisions 1--5 address it.
+
+\paragraph{Where the utility losses and gains came from.} On the cost side, a replay of the held-out runs where revision 3 lost utility that the undefended agent had attributed banking's 11 losses to the Checkpoint (9) and the Planner (2). Slack's 13 losses split into empty plans (5), the Checkpoint (2) and the agent itself (6). Revisions 4 and 5 targeted those losses. Revision 5's banking held-out gain over revision 3 came from two targeted fixes: a value-traced password change that now skips the judge (revision 3 to 5, task 14: 0 to 9 of 9 runs solved), and a failed call that no longer consumes its plan node (task 13: 5 to 8 of 9). We do not claim it transfers, since it did not replicate on travel (\S\ref{sec:main}).
 
 \paragraph{7B, dev splits.} Banking dev ASR: no defense 20/72, rev 3 0/72, rev 5 0/72. Slack dev ASR: 24/50, 4/50, 4/50.
 

@@ -57,7 +57,14 @@ section number clashes with this branch's §21.
 | 31 | Source papers' numbers (Table 1) | `CLAUDE.md` §9.2 and the PDFs in `docs/papers` |
 | 32 | IPIGuard App. G includes a Qwen2.5-7B-Instruct executor | IPIGuard PDF, Table 5 |
 
+## Compiled copy
+
+Compiled on Overleaf (project "Where Each Defense Fails...", with `acl.sty` and
+`acl_natbib.bst` imported from Overleaf's official ACL template): no errors or
+overfull boxes; body ends on page 8, with Limitations, Ethics and references after it,
+12 pages with appendices. The Overleaf copy of `main.tex` matched this file's SHA-256
+when it was last synced. Edit here and re-sync, or edit there and copy back.
+
 ## Open items
 
 - `TODO(author)` in `main.tex`: supervisor or course line, if wanted.
-- Page count against the 8-page limit is not yet checked against a compiled PDF.
