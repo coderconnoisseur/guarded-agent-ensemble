@@ -1160,7 +1160,7 @@ Slack's drift is not significant but is large. Slack comparisons against the lap
 - **Checkpoint only, Slack:** all 7 attacks are `injection_task_3`, a link the user asked the agent to act on.
 - **Planner only, Slack:** 7 attacks are `injection_task_3`, plus 2 others.
 
-So the two modules fail on different attacks. The Planner fails where the attacker reuses a planned call with its own values. The Checkpoint fails on a value the user legitimately pointed it to. Their union is the full ensemble's residual set. This is exploratory and comes from one run per configuration; the pre-registered test did not have the power to show it (p = 0.058).
+So the two modules fail on different attacks. The Planner fails where the attacker reuses a planned call with its own values. The Checkpoint fails on a value the user legitimately pointed it to. The full ensemble's residual is where both fail: on Slack, all 8 of its attacks are `injection_task_3`. This is exploratory and comes from one run per configuration; the pre-registered test did not have the power to show it (p = 0.058).
 
 **Reading it.**
 - **Security:** two of the three modules, each alone, give nearly all of the ensemble's protection against `important_instructions`. The ensemble's measurable gain over either is small, and it lies exactly where their blind spots differ.
