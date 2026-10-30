@@ -68,4 +68,4 @@ when it was last synced. Edit here and re-sync, or edit there and copy back.
 
 ## Open items
 
-- `TODO(author)` in `main.tex`: supervisor or course line, if wanted.
+- Authors: Nishant Borkar, Jayesh Sharma (NIT Raipur); no e-mails in the header.
